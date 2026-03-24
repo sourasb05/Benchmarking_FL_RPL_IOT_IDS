@@ -1,230 +1,178 @@
-# Federated IDS (LSTM) — Sequential Windowed Training Across Domains
+# Benchmarking Federated Learning for RPL-based IoT Intrusion Detection
 
-This repo trains a **federated** LSTM classifier over multiple **IDS “domains”** (each domain = a folder of CSVs).
-Per round, the global model is sent to each domain, trained locally, then **aggregated by data-size weighting** (FedAvg style).
-Evaluation is done **per domain** with Accuracy, F1, AUC (binary), Confusion Matrix, and (optionally) loss.
-
-
-### requirements.txt
-
-```text
-numpy
-pandas
-scikit-learn
-scipy
-matplotlib
-torch
-```
-
-> Note: Installing `torch` sometimes depends on your CUDA version. If you need GPU support, follow the command from [https://pytorch.org](https://pytorch.org) for your system (e.g., `pip install torch --index-url https://download.pytorch.org/whl/cu121`).
+This repository benchmarks **Federated Learning (FL) algorithms** for binary intrusion detection on RPL-based IoT network traffic. A two-layer **LSTM classifier** is trained in a federated setting across multiple clients, each holding a distinct attack-domain dataset. The benchmark currently implements **FedAvg** and **SCAFFOLD**, with a shared evaluation protocol that reports per-client local and global model performance after every communication round.
 
 ---
 
-## Features
+## Algorithms
 
-* Sliding-window sequence creation from raw per-timestep CSVs
-* Train/test split per domain (file-level)
-* Per-domain **min–max normalization** (using *train* files only; safe, NaN/Inf-proof)
-* **LSTMClassifier** (two-layer MLP head) and an optional **LSTMModelWithAttention**
-* Federated loop with **size-weighted model aggregation**
-* Metrics: Accuracy, F1 (binary or macro), ROC-AUC (binary), Confusion Matrix
-* CUDA/MPS detection (GPU if available)
+| Algorithm | File | Description |
+|-----------|------|-------------|
+| **FedAvg** | `server.py` / `client.py` | McMahan et al. (2017). Clients train locally with Adam; server averages model weights. |
+| **SCAFFOLD** | `scaffold_server.py` / `scaffold_client.py` | Karimireddy et al. (2020). Adds per-client control variates to correct client drift. Correction applied as a post-step parameter nudge (compatible with Adam). |
 
 ---
 
-## Folder Structure
+## Repository Structure
 
 ```
-repo/
-├─ src/
-│  ├─ main.py                 # entry point (training + federation + eval)
-│  ├─ evaluate_model.py       # evaluation utilities
-│  ├─ models.py               # LSTMClassifier & LSTMModelWithAttention
-│  └─ utils.py                # data loading, windowing, normalization, helpers
-├─ attack_data/               # (you create this) domains and CSVs live here
-│  ├─ domain_A/
-│  │  ├─ ..._1_60_sec.csv
-│  │  ├─ ..._2_60_sec.csv
-│  │  └─ ...
-│  └─ domain_B/
-│     └─ ...
-├─ results/                   # (created automatically if you save JSON later)
-├─ requirements.txt
-└─ README.md
+Benchmarking_FL_RPL_IOT_IDS/
+├── src/
+│   ├── main.py               # Entry point — parses args, builds model, dispatches algorithm
+│   ├── client.py             # FedAvg client (train + evaluate)
+│   ├── server.py             # FedAvg server loop
+│   ├── scaffold_client.py    # SCAFFOLD client (train with control variate correction)
+│   ├── scaffold_server.py    # SCAFFOLD server loop
+│   ├── models.py             # LSTMClassifier, LSTMModelWithAttention, CTVAE
+│   ├── utils.py              # Data loading, windowing, normalisation, arg parsing
+│   └── evaluate_model.py     # Evaluation utilities
+├── attack_data/              # (not tracked) RPL IoT domain folders of CSVs
+│   ├── <domain_name>/
+│   │   ├── ..._1_60_sec.csv
+│   │   ├── ..._2_60_sec.csv
+│   │   └── ...
+│   └── ...
+├── saved_models/             # (not tracked) Best model checkpoints
+│   ├── fedavg/
+│   │   ├── best_global_model.pth
+│   │   └── best_local_model_client_<id>.pth
+│   └── scaffold/
+│       ├── best_global_model.pth
+│       └── best_local_model_client_<id>.pth
+├── results/                  # (not tracked) Metrics JSON + convergence plots
+│   ├── fedavg_metrics.json
+│   ├── scaffold_metrics.json
+│   └── plots/
+│       └── <algo>_client_<id>_convergence.png
+├── .gitignore
+└── README.md
 ```
 
 ---
 
-## Data Expectations
+## Data Format
 
-* Place all data under: `attack_data/<domain_name>/`
-* Each CSV **must** contain a column named `label` with integer values:
+- Place all data under `attack_data/<domain_name>/` — each domain folder corresponds to one attack scenario.
+- Each CSV must contain a `label` column (`0` = benign, `1` = attack) and numeric feature columns.
+- Filenames follow the pattern `..._<index>_60_sec.csv`. The code uses the index to sort files consistently.
+- Per domain: first **16 files → train**, last **4 files → test** (file-level split).
 
-  * `0` = benign
-  * `1` = attack
-* Other columns are numeric features.
-* Filenames are sorted and (optionally) parsed with a pattern like `..._<index>_60_sec.csv` so that the code can keep a consistent ordering per domain.
+**Sliding window preprocessing** (applied per CSV):
+- `window_size` consecutive rows → one sample; label = last row's label.
+- Per-domain min–max normalisation computed from train files only, then applied to test.
+- Windows are reshaped to `(B, window_size, n_raw_features)` — true temporal sequences for the LSTM.
 
-**Windowing**
-From each CSV, we build sliding windows:
+---
 
-* `window_size` = sequence length
-* `step_size` = stride between windows
-* Each window becomes a single training sample, labeled with the **last** time step’s label.
+## Model
+
+**LSTMClassifier** (`models.py`)
+- 2-layer stacked LSTM → ReLU FC head → linear output
+- Input: `(batch, window_size, n_raw_features)` — `n_raw_features` is auto-detected from the first CSV at runtime
+- Output: raw logits `(batch, num_classes)`
+
+---
+
+## Federated Training Protocol
+
+Each communication round:
+
+1. **Local training** — each client initialises from the current global model and trains for `local_epochs` on its domain data.
+2. **Local evaluation** — the trained local model is evaluated immediately on the client's own test data (before aggregation). Best local model per client is saved.
+3. **Aggregation** — FedAvg averages model weights; SCAFFOLD additionally aggregates control variate deltas.
+4. **Global evaluation** — the aggregated global model is evaluated on every client's test data. Best global model is saved.
+
+**Metrics reported per client per round:** Accuracy, F1 (macro), Precision (macro), Recall (macro), Loss.
+
+**After all rounds:**
+- Per-client convergence plots: local vs global Accuracy and F1 across rounds.
+- Final evaluation of the best saved global model across all clients.
+- Final evaluation of each client's best saved local model.
+- Side-by-side comparison table.
 
 ---
 
 ## Installation
 
 ```bash
-# (Recommended) Use Python 3.9+ and a fresh virtual environment
 python -m venv .venv
-source .venv/bin/activate    # Windows: .venv\Scripts\activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
 pip install --upgrade pip
-pip install -r requirements.txt
-
-# If you need a specific CUDA build of PyTorch, install it from pytorch.org instead of the generic `torch` above.
+pip install torch numpy pandas scikit-learn matplotlib
 ```
+
+For GPU support install PyTorch with the appropriate CUDA build from [pytorch.org](https://pytorch.org).
 
 ---
 
 ## Quick Start
 
-From the `src/` directory:
-
 ```bash
-python main.py
-  --input_size 140
-  --hidden_size 64 
-  --num_layers 1 
-  --output_size 2
-  --window_size 10
-  --step_size 3
-  --batch_size 64
-  --global_iters 5
-  --local_epochs 5
-  --lr 0.001
-```
-or just try
+cd src
 
-```bash
-python main.py
+# Run FedAvg
+python main.py --algorithm fedavg --global_iters 20 --local_epochs 5 --lr 0.001
 
-```
-
-
-You should see logs like:
-
-```
-Using device: cuda
---- Global Iteration 1 / 5 ---
-Training on domain: blackhole_var10_base
-Epoch 1/5, Loss: 0.6934
-...
-[blackhole_var10_base] n=2160 | acc=0.5111111402511597 | f1=0.676470588235294 | auc=0.5004734848484849 | loss=21.529428482055664 | cm=[[   0 1056]
- [   0 1104]]
-[blackhole_var10...
-=== Aggregates (computed from per-domain) ===
-Accuracy: 59.82%
-F1: 0.5477
-AUC : 0.7422
-Loss : 5.4910
+# Run SCAFFOLD
+python main.py --algorithm scaffold --global_iters 20 --local_epochs 5 --lr 0.001
 ```
 
 ---
 
 ## Command-Line Arguments
 
-| Arg              |     Default | Description                                                                                                                                                                                 |
-| ---------------- | ----------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--input_size`   |         140 | Number of flattened features per time step (after windowing this becomes your time dimension × features, but code currently flattens time into features and uses seq len 1; see **Notes**). |
-| `--hidden_size`  |          64 | LSTM hidden size.                                                                                                                                                                           |
-| `--num_layers`   |           1 | LSTM layers.                                                                                                                                                                                |
-| `--output_size`  |           2 | Number of classes (binary IDS).                                                                                                                                                             |
-| `--window_size`  |          10 | Sliding window length (per CSV).                                                                                                                                                            |
-| `--step_size`    |           3 | Stride between windows.                                                                                                                                                                     |
-| `--batch_size`   |          64 | Mini-batch size.                                                                                                                                                                            |
-| `--global_iters` |           5 | Federated rounds.                                                                                                                                                                           |
-| `--local_epochs` |           5 | Local epochs per domain per round.                                                                                                                                                          |
-| `--lr`           |       0.001 | Local optimizer LR (Adam).                                                                                                                                                                  |
-| `--seed`         |          42 | Random seed.                                                                                                                                                                                |
-| `--save_dir`     | `./results` | Where to store outputs if you add saving.                                                                                                                                                   |
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--algorithm` | `fedavg` | FL algorithm: `fedavg` or `scaffold` |
+| `--hidden_size` | `64` | LSTM hidden dimension |
+| `--output_size` | `2` | Number of classes |
+| `--window_size` | `10` | Sliding window length |
+| `--step_size` | `2` | Stride between windows |
+| `--batch_size` | `64` | Mini-batch size |
+| `--global_iters` | `20` | Number of FL communication rounds |
+| `--local_epochs` | `5` | Local training epochs per round |
+| `--lr` | `0.001` | Learning rate (Adam) |
+| `--seed` | `42` | Random seed |
+
+> `--input_size` and `--n_raw_features` are **auto-computed** from the data at runtime; do not set them manually.
 
 ---
 
-## Notes on the Model Shapes
+## Outputs
 
-* In `utils.load_data`, windows are flattened and then reshaped to `(B, 1, feature_dim)`, so the LSTM sequence length is **1** and `feature_dim = (#features × window_size)`.
-
-  * This keeps your model as an LSTM while effectively acting like a 1-step sequence with a large feature vector.
-  * If you prefer a **true temporal** LSTM (seq len = `window_size`), change the data prep to keep shape `(B, window_size, #features)` and set `input_size = #features`.
-
-* `LSTMClassifier` returns `(logits, (h_n, c_n))`.
-
-* `LSTMModelWithAttention` returns `(logits, context)` and can be swapped into `main.py` if desired.
+| Output | Location | Description |
+|--------|----------|-------------|
+| Best global model | `saved_models/<algo>/best_global_model.pth` | Saved when avg accuracy across clients improves |
+| Best local models | `saved_models/<algo>/best_local_model_client_<id>.pth` | Per-client, saved when that client's local accuracy improves |
+| Metrics JSON | `results/<algo>_metrics.json` | Per-iteration local and global metrics for all clients, plus final comparison |
+| Convergence plots | `results/plots/<algo>_client_<id>_convergence.png` | Accuracy and F1 curves: local vs global per client |
 
 ---
 
-## Evaluation Details
+## SCAFFOLD Implementation Notes
 
-`evaluate_model.eval_global` computes:
+The standard SCAFFOLD correction adds `(c - c_i)` to the gradient before the optimiser step. With Adam this is distorted by the adaptive variance scaling, so the correction is applied as a **post-step parameter nudge** instead:
 
-* **Accuracy**
-* **F1**: binary if 2 classes; macro otherwise
-* **AUC**: only for binary when both classes are present in the batch
-* **Confusion Matrix**
-* **Loss** (Cross-Entropy), when tensors are compatible
+```
+x ← x - lr * (c_i - c_server)
+```
 
-Per-domain results are printed each round. A simple weighted aggregate (by number of samples) is printed at the end of each round.
+Control variate update follows **Option II** from the paper:
 
----
+```
+c_i_new = c_i - c_server + (x_global - x_local) / (K × lr)
+```
 
-## Data & Naming Conventions
-
-* Domains are discovered from subfolders in `attack_data/`.
-* Per domain, files are sorted; first 16 files → **train**, last 4 files → **test** (you can change this in `utils.load_data`).
-* CSVs must include a **`label`** column; all other columns are treated as numeric features.
+where `K` is the total number of local steps. The server accumulates the average control variate delta each round.
 
 ---
 
 ## Troubleshooting
 
-* **`FileNotFoundError: .../attack_data`**
-  Ensure your data directory exists: `attack_data/<domain>/*.csv`.
-
-* **`'label' column missing`**
-  Each CSV must have a `label` column with 0/1 values.
-
-* **AUC is `None`**
-  Happens when a test batch contains only one class (all 0s or all 1s). That’s expected behavior.
-
-* **CUDA not used**
-  You’ll see `Using device: cpu`. Check PyTorch install and GPU drivers.
-
----
-
-## Optional: .gitignore (suggested)
-
-Create a `.gitignore` in repo root:
-
-```
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.venv/
-.env
-.ipynb_checkpoints/
-
-# Data & results
-attack_data/
-results/
-wandb/
-
-# OS
-.DS_Store
-Thumbs.db
-```
----
+| Error | Fix |
+|-------|-----|
+| `FileNotFoundError: .../attack_data` | Create `attack_data/` at the project root and add domain subfolders |
+| `'label' column missing` | Each CSV must have a `label` column with integer `0`/`1` values |
+| `CUDA not used` | Check PyTorch install and GPU drivers; CPU fallback is automatic |
+| Shape mismatch in LSTM | Do not set `--input_size` manually — it is auto-computed from the data |
