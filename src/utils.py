@@ -273,14 +273,26 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=0.001,
                         help='Learning rate for local optimizers')
     parser.add_argument('--algorithm', type=str, default='fedavg',
-                        choices=['fedavg', 'scaffold', 'tvae', 'tabvae', 'Rvae', 'replay', 'pcflta', 'gmm'],
+                        choices=['fedavg', 'scaffold', 'fedprox', 'tvae', 'tabvae', 'Rvae', 'replay', 'pcflta', 'gmm'],
                         help='Federated learning algorithm to use')
 
     # Paths and environment
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for reproducibility')
+    parser.add_argument('--set_seed', type=bool, default=True,
+                        help='Whether to set random seeds for reproducibility')
     parser.add_argument('--save_dir', type=str, default='./results',
                         help='Directory to save results (JSON, logs, etc.)')
 
     args = parser.parse_args()
     return args
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False

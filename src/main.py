@@ -20,6 +20,7 @@ import sys
 from client import Client
 from server import server
 from scaffold_server import scaffold_server
+from fedprox_server import fedprox_server
 import utils as utils
 import models as models
 import evaluate_model as evaluate_model
@@ -29,6 +30,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     args = utils.parse_args()
+    # Set random seeds for reproducibility
+    if args.set_seed:
+        utils.set_seed(args.seed)
 
     current_directory = os.path.dirname(os.path.abspath(__file__))  # /proj/.../Local_IDS/src
     project_root = os.path.dirname(current_directory)              # /proj/.../Local_IDS
@@ -93,6 +97,16 @@ def main():
         )
     elif args.algorithm == 'scaffold':
         scaffold_server(
+            args=args,
+            model=model,
+            device=device,
+            domains_path=domains_path,
+            client_distributions=client_distributions,
+            max_client_participants=max_client_participants,
+            project_root=project_root,
+        )
+    elif args.algorithm == 'fedprox':
+        fedprox_server(
             args=args,
             model=model,
             device=device,
