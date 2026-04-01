@@ -14,6 +14,7 @@ from sklearn.metrics import (
 import warnings
 warnings.filterwarnings("ignore")
 import sys
+import time 
 
 # our defined functions
 
@@ -38,6 +39,8 @@ def main():
     project_root = os.path.dirname(current_directory)              # /proj/.../Local_IDS
     domains_path = os.path.join(project_root, 'attack_data') 
     
+    if args.timing:
+        start_time_setup = time.time()
 
     domains = utils.create_domains(domains_path)
 
@@ -84,6 +87,10 @@ def main():
     # num_layers=2 stacks two LSTM layers for deeper temporal abstraction.
     model = models.LSTMClassifier(input_dim=n_raw_features, hidden_dim=args.hidden_size, output_dim=args.output_size, num_layers=2, fc_hidden_dim=32).to(device)
 
+    if args.timing:
+        end_time_setup = time.time()
+        print(f"\n[Timing] Setup time: {end_time_setup - start_time_setup:.2f} seconds")
+        start_time_training = time.time()
     # Trigger the server execution based on the chosen algorithm
     if args.algorithm == 'fedavg':
         server(
@@ -116,6 +123,10 @@ def main():
             project_root=project_root,
             mu=1.0,
         )
+
+    if args.timing:
+        end_time_training = time.time()
+        print(f"\n[Timing] Total training time: {end_time_training - start_time_training:.2f} seconds")
 
     
 

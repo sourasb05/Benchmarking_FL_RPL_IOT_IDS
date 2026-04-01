@@ -283,6 +283,8 @@ def parse_args():
                         help='Whether to set random seeds for reproducibility')
     parser.add_argument('--save_dir', type=str, default='./results',
                         help='Directory to save results (JSON, logs, etc.)')
+    parser.add_argument('--timing', type=bool, default=True,
+                        help='Whether to measure and report time')
 
     args = parser.parse_args()
     return args
