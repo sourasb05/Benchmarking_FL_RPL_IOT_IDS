@@ -1,0 +1,256 @@
+import os
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import torch
+from fedprox_client import FedProxClient
+from utils import save_results_as_json
+
+
+# ------------------------------------------------------------------ #
+# Helpers
+# ------------------------------------------------------------------ #
+
+def _plot_client_convergence(client_id, global_hist, local_hist, plots_dir):
+    """
+    2-panel convergence plot per client: Accuracy and F1 (local vs global).
+    global_hist / local_hist: list of dicts {accuracy, f1, precision, recall, loss}
+    """
+    iters = list(range(1, len(global_hist) + 1))
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    fig.suptitle(f"Client {client_id} — Convergence (Local vs Global)", fontsize=13)
+
+    for ax, metric, ylabel in zip(
+        axes,
+        ["accuracy", "f1"],
+        ["Accuracy", "F1 Score (macro)"],
+    ):
+        ax.plot(iters, [m[metric] for m in global_hist], marker="o", label="Global model")
+        ax.plot(iters, [m[metric] for m in local_hist],  marker="s", linestyle="--", label="Local model")
+        ax.set_xlabel("Global Iteration")
+        ax.set_ylabel(ylabel)
+        ax.set_title(ylabel)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    path = os.path.join(plots_dir, f"client_{client_id}_convergence.png")
+    plt.savefig(path, dpi=120)
+    plt.close(fig)
+    return path
+
+
+def _print_comparison_table(client_list, best_global_results, best_local_results):
+    """Print a side-by-side table: best global model vs best local model per client."""
+    header = (
+        f"{'Client':>8} | "
+        f"{'G-Acc':>7} {'G-F1':>7} {'G-Prec':>8} {'G-Rec':>7} | "
+        f"{'L-Acc':>7} {'L-F1':>7} {'L-Prec':>8} {'L-Rec':>7}"
+    )
+    sep = "-" * len(header)
+    print(f"\n{sep}")
+    print("  FINAL: Best Global Model vs Best Local Model per Client")
+    print(sep)
+    print(header)
+    print(sep)
+
+    for c in client_list:
+        cid = c.client_id
+        g = best_global_results[cid]
+        l = best_local_results[cid]
+        print(
+            f"{cid:>8} | "
+            f"{g['accuracy']:>7.4f} {g['f1']:>7.4f} {g['precision']:>8.4f} {g['recall']:>7.4f} | "
+            f"{l['accuracy']:>7.4f} {l['f1']:>7.4f} {l['precision']:>8.4f} {l['recall']:>7.4f}"
+        )
+
+    def _mean(d, k):
+        return sum(v[k] for v in d.values()) / len(d)
+
+    print(sep)
+    print(
+        f"{'AVG':>8} | "
+        f"{_mean(best_global_results,'accuracy'):>7.4f} {_mean(best_global_results,'f1'):>7.4f} "
+        f"{_mean(best_global_results,'precision'):>8.4f} {_mean(best_global_results,'recall'):>7.4f} | "
+        f"{_mean(best_local_results,'accuracy'):>7.4f} {_mean(best_local_results,'f1'):>7.4f} "
+        f"{_mean(best_local_results,'precision'):>8.4f} {_mean(best_local_results,'recall'):>7.4f}"
+    )
+    print(sep)
+
+
+# ------------------------------------------------------------------ #
+# Server
+# ------------------------------------------------------------------ #
+
+def fedprox_server(args, model, device, domains_path, client_distributions, max_client_participants, project_root):
+    """
+    Fedprox — single time step.
+
+    """
+    print("\n--- Starting Federated Proximal (FedProx) ---")
+
+    models_dir = os.path.join(project_root, "saved_models", "fedprox")
+    plots_dir  = os.path.join(project_root, "results", "plots")
+    os.makedirs(models_dir, exist_ok=True)
+    os.makedirs(plots_dir,  exist_ok=True)
+
+    time_step = 0  # single time step
+
+    # ---- initialise clients ----
+    client_list = [
+        FedProxClient(
+            client_id=i,
+            args=args,
+            domain_path=domains_path,
+            assigned_domains=client_distributions[i],
+            device=device,
+            model=model,
+        )
+        for i in range(max_client_participants)
+    ]
+    print(f"Initialized {len(client_list)} clients.")
+
+    # ---- metric history (indexed by iteration) ----
+    per_iter_global = {}   # per_iter_global[iter][client_id] = {acc, f1, ...}
+    per_iter_local  = {}   # per_iter_local[iter][client_id]  = {acc, f1, ...}
+
+    client_global_hist = {c.client_id: [] for c in client_list}
+    client_local_hist  = {c.client_id: [] for c in client_list}
+
+    best_global_acc = -1.0
+    best_local_acc  = {c.client_id: -1.0 for c in client_list}
+
+    # ------------------------------------------------------------------ #
+    # Global iteration loop
+    # ------------------------------------------------------------------ #
+    for iteration in range(args.global_iters):
+        print(f"\n{'='*55}")
+        print(f"  Global Iteration {iteration + 1} / {args.global_iters}")
+        print(f"{'='*55}")
+
+        # -------------------------------------------------------------- #
+        # STEP 1 — Local training + immediate local evaluation
+        # Each client initialises from the current global weights, trains,
+        # then is evaluated on its OWN test data BEFORE aggregation.
+        # -------------------------------------------------------------- #
+        print(f"\n  [Step 1] Local training & evaluation")
+        local_states = []
+        per_iter_local[iteration] = {}
+        l_totals = dict(loss=0.0, accuracy=0.0, f1=0.0, precision=0.0, recall=0.0)
+
+        for c in client_list:
+            # train — updates c.local_model, returns its state_dict
+            trained_state = c.train(model.state_dict(), time_step=time_step)
+            local_states.append(trained_state)
+
+            # evaluate the just-trained local model (c.local_model still holds it)
+            loss, acc, f1, prec, rec = c.evaluate_local_model_full(time_step)
+            row = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec)
+            per_iter_local[iteration][c.client_id] = row
+            client_local_hist[c.client_id].append(row)
+            for k in l_totals:
+                l_totals[k] += row[k]
+
+            # save best local model per client
+            if acc > best_local_acc[c.client_id]:
+                best_local_acc[c.client_id] = acc
+                local_path = os.path.join(models_dir, f"best_local_model_client_{c.client_id}.pth")
+                torch.save(c.local_model.state_dict(), local_path)
+                print(f"  --> [Saved] Best local model client {c.client_id} (acc={acc:.4f})")
+
+        avg_l = {k: v / len(client_list) for k, v in l_totals.items()}
+        print(f"\n  [Avg Local]  Acc={avg_l['accuracy']:.4f}  F1={avg_l['f1']:.4f}  "
+              f"Prec={avg_l['precision']:.4f}  Rec={avg_l['recall']:.4f}  Loss={avg_l['loss']:.4f}")
+
+        # -------------------------------------------------------------- #
+        # STEP 2 — FedAvg aggregation → global model evaluation
+        # -------------------------------------------------------------- #
+        print(f"\n  [Step 2] FedAvg aggregation & global model evaluation")
+        global_state = model.state_dict()
+        n = len(local_states)
+        for key in global_state:
+            global_state[key] = sum(s[key] for s in local_states) / n
+        model.load_state_dict(global_state)
+
+        per_iter_global[iteration] = {}
+        g_totals = dict(loss=0.0, accuracy=0.0, f1=0.0, precision=0.0, recall=0.0)
+
+        for c in client_list:
+            loss, acc, f1, prec, rec = c.evaluate_global_model(model.state_dict(), time_step)
+            row = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec)
+            per_iter_global[iteration][c.client_id] = row
+            client_global_hist[c.client_id].append(row)
+            for k in g_totals:
+                g_totals[k] += row[k]
+
+        avg_g = {k: v / len(client_list) for k, v in g_totals.items()}
+        print(f"\n  [Avg Global] Acc={avg_g['accuracy']:.4f}  F1={avg_g['f1']:.4f}  "
+              f"Prec={avg_g['precision']:.4f}  Rec={avg_g['recall']:.4f}  Loss={avg_g['loss']:.4f}")
+
+        # save best global model
+        if avg_g["accuracy"] > best_global_acc:
+            best_global_acc = avg_g["accuracy"]
+            best_global_path = os.path.join(models_dir, "best_global_model.pth")
+            torch.save(model.state_dict(), best_global_path)
+            print(f"  --> [Saved] Best global model (acc={best_global_acc:.4f})")
+
+    # ------------------------------------------------------------------ #
+    # Convergence plots — one per client
+    # ------------------------------------------------------------------ #
+    print("\n--- Generating convergence plots ---")
+    for c in client_list:
+        path = _plot_client_convergence(
+            c.client_id,
+            client_global_hist[c.client_id],
+            client_local_hist[c.client_id],
+            plots_dir,
+        )
+        print(f"  [Plot] Client {c.client_id} -> {path}")
+
+    # ------------------------------------------------------------------ #
+    # Final evaluation — best global model across ALL clients
+    # ------------------------------------------------------------------ #
+    print("\n--- Final Evaluation: Best Global Model ---")
+    best_global_path = os.path.join(models_dir, "best_global_model.pth")
+    model.load_state_dict(torch.load(best_global_path, map_location=device))
+
+    best_global_results = {}
+    for c in client_list:
+        loss, acc, f1, prec, rec = c.evaluate_global_model(model.state_dict(), time_step)
+        best_global_results[c.client_id] = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec)
+
+    # ------------------------------------------------------------------ #
+    # Final evaluation — best local model for each client
+    # ------------------------------------------------------------------ #
+    print("\n--- Final Evaluation: Best Local Models ---")
+    best_local_results = {}
+    for c in client_list:
+        local_path = os.path.join(models_dir, f"best_local_model_client_{c.client_id}.pth")
+        loss, acc, f1, prec, rec = c.evaluate_model(
+            torch.load(local_path, map_location=device), time_step
+        )
+        best_local_results[c.client_id] = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec)
+        print(f"  [Client {c.client_id}] [Best Local] "
+              f"Acc={acc:.4f}  F1={f1:.4f}  Prec={prec:.4f}  Rec={rec:.4f}  Loss={loss:.4f}")
+
+    # ------------------------------------------------------------------ #
+    # Side-by-side comparison table
+    # ------------------------------------------------------------------ #
+    _print_comparison_table(client_list, best_global_results, best_local_results)
+
+    # ------------------------------------------------------------------ #
+    # Save all results to JSON
+    # ------------------------------------------------------------------ #
+    print("\n--- Training Complete ---")
+
+    results = {
+        "global_metrics_per_iteration": per_iter_global,
+        "local_metrics_per_iteration":  per_iter_local,
+        "final_best_global_model":      best_global_results,
+        "final_best_local_models":      best_local_results,
+    }
+
+    results_folder = os.path.join(project_root, "results")
+    save_results_as_json("fedavg_metrics.json", results, project_root, results_folder)
