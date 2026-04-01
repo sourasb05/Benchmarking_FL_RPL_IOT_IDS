@@ -42,7 +42,8 @@ class FedProxClient:
         
         self.local_model.load_state_dict(copy.deepcopy(global_model_state))
         self.local_model.train()
-
+        
+        global_params = {k: v.to(self.device) for k, v in global_model_state.items()}
         # 2. Setup Optimizer and Criterion
         
 
@@ -63,8 +64,10 @@ class FedProxClient:
                 # Add FedProx proximal term
                 
                 prox = 0.0
-                for param_local, param_global in zip(self.local_model.parameters(), global_model_state.values()):
-                    prox += torch.norm(param_local - param_global) ** 2
+                
+                for name, param in self.local_model.named_parameters():
+                    prox += torch.norm(param - global_params[name]) ** 2
+
 
                 prox = (self.mu / 2) * prox
                 total_loss = loss + prox
@@ -75,7 +78,7 @@ class FedProxClient:
                 torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), max_norm=5.0)
                 
                 self.optimizer.step()
-                epoch_loss += loss.item()
+                epoch_loss += total_loss.item()
 
             avg_loss = epoch_loss / len(self.train_domains_loader[self.domain_keys[time_step]])
             self.local_loss_history.append(avg_loss)

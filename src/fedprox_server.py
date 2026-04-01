@@ -166,9 +166,9 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
               f"Prec={avg_l['precision']:.4f}  Rec={avg_l['recall']:.4f}  Loss={avg_l['loss']:.4f}")
 
         # -------------------------------------------------------------- #
-        # STEP 2 — FedAvg aggregation → global model evaluation
+        # STEP 2 — FedProx aggregation → global model evaluation
         # -------------------------------------------------------------- #
-        print(f"\n  [Step 2] FedAvg aggregation & global model evaluation")
+        print(f"\n  [Step 2] FedProx aggregation & global model evaluation")
         global_state = model.state_dict()
         n = len(local_states)
         for key in global_state:
