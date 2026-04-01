@@ -20,7 +20,7 @@ def _plot_client_convergence(client_id, global_hist, local_hist, plots_dir):
     iters = list(range(1, len(global_hist) + 1))
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    fig.suptitle(f"Client {client_id} — Convergence (Local vs Global)", fontsize=13)
+    fig.suptitle(f"Client {client_id} — FedProx Convergence (Local vs Global)", fontsize=13)
 
     for ax, metric, ylabel in zip(
         axes,
@@ -36,7 +36,7 @@ def _plot_client_convergence(client_id, global_hist, local_hist, plots_dir):
         ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    path = os.path.join(plots_dir, f"client_{client_id}_convergence.png")
+    path = os.path.join(plots_dir, f"fedprox_client_{client_id}_convergence.png")
     plt.savefig(path, dpi=120)
     plt.close(fig)
     return path
@@ -84,7 +84,7 @@ def _print_comparison_table(client_list, best_global_results, best_local_results
 # Server
 # ------------------------------------------------------------------ #
 
-def fedprox_server(args, model, device, domains_path, client_distributions, max_client_participants, project_root):
+def fedprox_server(args, model, device, domains_path, client_distributions, max_client_participants, project_root, mu):
     """
     Fedprox — single time step.
 
@@ -92,7 +92,7 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
     print("\n--- Starting Federated Proximal (FedProx) ---")
 
     models_dir = os.path.join(project_root, "saved_models", "fedprox")
-    plots_dir  = os.path.join(project_root, "results", "plots")
+    plots_dir  = os.path.join(project_root, "results", "plots", "fedprox")
     os.makedirs(models_dir, exist_ok=True)
     os.makedirs(plots_dir,  exist_ok=True)
 
@@ -107,6 +107,7 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
             assigned_domains=client_distributions[i],
             device=device,
             model=model,
+            mu=mu,  
         )
         for i in range(max_client_participants)
     ]
@@ -253,4 +254,4 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
     }
 
     results_folder = os.path.join(project_root, "results")
-    save_results_as_json("fedavg_metrics.json", results, project_root, results_folder)
+    save_results_as_json("fedprox_metrics.json", results, project_root, results_folder)

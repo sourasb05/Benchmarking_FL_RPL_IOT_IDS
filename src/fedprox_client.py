@@ -6,7 +6,7 @@ import utils
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 
 class FedProxClient:
-    def __init__(self, client_id, args, domain_path, assigned_domains, device, model):
+    def __init__(self, client_id, args, domain_path, assigned_domains, device, model, mu):
         self.client_id = client_id
         self.args = args
         self.domain_path = domain_path
@@ -28,6 +28,9 @@ class FedProxClient:
         self.domain_keys = list(self.train_domains_loader.keys())
         self.optimizer = optim.Adam(self.local_model.parameters(), lr=self.args.lr)
         self.criterion = nn.CrossEntropyLoss()
+        
+        # Proximal term coefficient
+        self.mu = mu  
 
     def train(self, global_model_state, time_step):
         """
@@ -56,7 +59,17 @@ class FedProxClient:
                 self.optimizer.zero_grad()
                 output, _ = self.local_model(data)
                 loss = self.criterion(output, target)
-                loss.backward()
+
+                # Add FedProx proximal term
+                
+                prox = 0.0
+                for param_local, param_global in zip(self.local_model.parameters(), global_model_state.values()):
+                    prox += torch.norm(param_local - param_global) ** 2
+
+                prox = (self.mu / 2) * prox
+                total_loss = loss + prox
+
+                total_loss.backward()
                 
                 # Optional: Gradient clipping for LSTMs to prevent exploding gradients
                 torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), max_norm=5.0)
@@ -91,10 +104,10 @@ class FedProxClient:
                 total_loss += loss.item()
                 
                 # Compute metrics here (e.g., loss, accuracy) and store them if needed
-        evaluateion_loss = total_loss / len(self.test_domains_loader[self.domain_keys[time_step]])
-        # print(f"  [Client {self.client_id}] Evaluation Loss: {evaluateion_loss:.4f}")
+        evaluation_loss = total_loss / len(self.test_domains_loader[self.domain_keys[time_step]])
+        # print(f"  [Client {self.client_id}] Evaluation Loss: {evaluation_loss:.4f}")
         
-        return evaluateion_loss
+        return evaluation_loss
 
         # Use your evaluate_model utility here
         # results = evaluate_model.test(eval_model, self.test_loader, self.device)
