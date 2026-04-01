@@ -104,7 +104,7 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
     print("\n--- Starting Federated Averaging (FedAvg) ---")
 
     models_dir = os.path.join(project_root, "saved_models", "fedavg")
-    plots_dir  = os.path.join(project_root, "results", "plots")
+    plots_dir  = os.path.join(project_root, "results", "plots", "fedavg")
     os.makedirs(models_dir, exist_ok=True)
     os.makedirs(plots_dir,  exist_ok=True)
 
