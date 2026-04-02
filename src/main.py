@@ -121,7 +121,7 @@ def main():
             client_distributions=client_distributions,
             max_client_participants=max_client_participants,
             project_root=project_root,
-            mu=0.1,
+            mu=args.mu,
         )
 
     if args.timing:
