@@ -275,6 +275,8 @@ def parse_args():
     parser.add_argument('--algorithm', type=str, default='fedavg',
                         choices=['fedavg', 'scaffold', 'fedprox', 'tvae', 'tabvae', 'Rvae', 'replay', 'pcflta', 'gmm'],
                         help='Federated learning algorithm to use')
+    parser.add_argument('--mu', type=float, default=0.1,
+                        help='Proximal term constant for FedProx (ignored if not using FedProx)')
 
     # Paths and environment
     parser.add_argument('--seed', type=int, default=42,
