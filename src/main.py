@@ -22,6 +22,7 @@ from client import Client
 from server import server
 from scaffold_server import scaffold_server
 from fedprox_server import fedprox_server
+from ditto_server import ditto_server
 import utils as utils
 import models as models
 import evaluate_model as evaluate_model
@@ -123,7 +124,18 @@ def main():
             project_root=project_root,
             mu=args.mu,
         )
-
+    elif args.algorithm == 'ditto':
+        ditto_server(
+            args=args,
+            model=model,
+            device=device,
+            domains_path=domains_path,
+            client_distributions=client_distributions,
+            max_client_participants=max_client_participants,
+            project_root=project_root,
+            lam=args.lam,
+        )
+        
     if args.timing:
         end_time_training = time.time()
         print(f"\n[Timing] Total training time: {end_time_training - start_time_training:.2f} seconds")
