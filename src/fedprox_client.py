@@ -51,27 +51,24 @@ class FedProxClient:
         # print(f"  [Client {self.client_id}] Training on domains: {list(self.train_domains_loader.keys())}")
         # 3. Training Loop
         # print(f" [Client {self.client_id}] Time Step {time_step+1}/{len(self.domain_keys)} - Training on domain: {self.domain_keys[time_step]}")
+         # Add FedProx proximal term
+                
+        epoch_loss = 0.0
         for epoch in range(self.args.local_epochs):
-            epoch_loss = 0.0
+
             for batch_idx, (data, target) in enumerate(self.train_domains_loader[self.domain_keys[time_step]]):
                 # Ensure data is (batch, seq_len, features)
                 data, target = data.to(self.device), target.to(self.device)
-                
                 self.optimizer.zero_grad()
                 output, _ = self.local_model(data)
                 loss = self.criterion(output, target)
 
-                # Add FedProx proximal term
-                
                 prox = 0.0
-                
                 for name, param in self.local_model.named_parameters():
-                    prox += torch.norm(param - global_params[name]) ** 2
-
+                    prox += torch.norm(param - global_params[name].detach()) ** 2
 
                 prox = (self.mu / 2) * prox
                 total_loss = loss + prox
-
                 total_loss.backward()
                 
                 # Optional: Gradient clipping for LSTMs to prevent exploding gradients

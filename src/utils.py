@@ -273,7 +273,7 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=0.001,
                         help='Learning rate for local optimizers')
     parser.add_argument('--algorithm', type=str, default='fedavg',
-                        choices=['fedavg', 'scaffold', 'fedprox', 'tvae', 'tabvae', 'Rvae', 'replay', 'pcflta', 'gmm', 'ditto'],
+                        choices=['fedavg', 'scaffold', 'fedprox', 'ditto'],
                         help='Federated learning algorithm to use')
     parser.add_argument('--mu', type=float, default=0.01,
                         help='Proximal term constant for FedProx (ignored if not using FedProx)')
