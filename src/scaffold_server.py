@@ -117,8 +117,10 @@ def scaffold_server(args, model, device, domains_path, client_distributions,
     """
     print("\n--- Starting SCAFFOLD ---")
 
-    models_dir = os.path.join(project_root, "saved_models", "scaffold")
-    plots_dir  = os.path.join(project_root, "results", "plots")
+    base_save_dir = os.path.join(project_root, args.save_dir, args.exp_name, args.algorithm)
+    models_dir = os.path.join(base_save_dir, "models")
+    plots_dir  = os.path.join(base_save_dir, "plots")
+    
     os.makedirs(models_dir, exist_ok=True)
     os.makedirs(plots_dir,  exist_ok=True)
 
@@ -303,5 +305,6 @@ def scaffold_server(args, model, device, domains_path, client_distributions,
         "final_best_local_models":      best_local_results,
     }
 
-    results_folder = os.path.join(project_root, "results")
-    save_results_as_json("scaffold_metrics.json", results, project_root, results_folder)
+    results_folder = base_save_dir
+    filename = f"metrics_scaffold_{args.exp_name}.json"
+    save_results_as_json(filename, results, project_root, results_folder)

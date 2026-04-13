@@ -65,10 +65,10 @@ def save_results_as_json(filename, results_to_save, project_root, save_folder="r
     print(f"Saved results to {filepath}")
 
     # Save the JSON file
-    save_path = os.path.join(project_root, filename)
-    with open(save_path, 'w') as f:
-        json.dump(results_to_save, f, indent=4)
-        print(f"\nMetrics successfully saved to: {save_path}")
+    #save_path = os.path.join(project_root, filename)
+    #with open(save_path, 'w') as f:
+    #    json.dump(results_to_save, f, indent=4)
+    #    print(f"\nMetrics successfully saved to: {save_path}")
         
 
 # Function to create sliding windows
@@ -289,6 +289,8 @@ def parse_args():
                         help='Directory to save results (JSON, logs, etc.)')
     parser.add_argument('--timing', type=bool, default=True,
                         help='Whether to measure and report time')
+    parser.add_argument('--exp_name', type=str, default='debug_run',
+                        help='Name of the experiment (e.g., Exp_2.1_Core)')
 
     args = parser.parse_args()
     return args

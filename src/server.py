@@ -103,8 +103,10 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
     """
     print("\n--- Starting Federated Averaging (FedAvg) ---")
 
-    models_dir = os.path.join(project_root, "saved_models", "fedavg")
-    plots_dir  = os.path.join(project_root, "results", "plots", "fedavg")
+    base_save_dir = os.path.join(project_root, args.save_dir, args.exp_name, args.algorithm)
+    models_dir = os.path.join(base_save_dir, "models")
+    plots_dir  = os.path.join(base_save_dir, "plots")
+    
     os.makedirs(models_dir, exist_ok=True)
     os.makedirs(plots_dir,  exist_ok=True)
 
@@ -262,7 +264,9 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
         "local_metrics_per_iteration":  per_iter_local,
         "final_best_global_model":      best_global_results,
         "final_best_local_models":      best_local_results,
+        "hyperparameters": args.__dict__,
     }
 
-    results_folder = os.path.join(project_root, "results")
-    save_results_as_json("fedavg_metrics.json", results, project_root, results_folder)
+    results_folder = base_save_dir
+    filename = f"metrics_fedavg_{args.exp_name}.json"
+    save_results_as_json(filename, results, project_root, results_folder)
