@@ -287,8 +287,6 @@ def parse_args():
                         help='Whether to set random seeds for reproducibility')
     parser.add_argument('--save_dir', type=str, default='./results',
                         help='Directory to save results (JSON, logs, etc.)')
-    parser.add_argument('--timing', type=bool, default=True,
-                        help='Whether to measure and report time')
     parser.add_argument('--exp_name', type=str, default='debug_run',
                         help='Name of the experiment (e.g., Exp_2.1_Core)')
 

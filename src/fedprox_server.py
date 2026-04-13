@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import torch
 from fedprox_client import FedProxClient
 from utils import save_results_as_json
+import time
 
 
 # ------------------------------------------------------------------ #
@@ -125,10 +126,13 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
     best_global_acc = -1.0
     best_local_acc  = {c.client_id: -1.0 for c in client_list}
 
+    round_times = []  # To store time taken for each global iteration
+
     # ------------------------------------------------------------------ #
     # Global iteration loop
     # ------------------------------------------------------------------ #
     for iteration in range(args.global_iters):
+        round_start = time.perf_counter() 
         print(f"\n{'='*55}")
         print(f"  Global Iteration {iteration + 1} / {args.global_iters}")
         print(f"{'='*55}")
@@ -198,7 +202,12 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
             best_global_path = os.path.join(models_dir, "best_global_model.pth")
             torch.save(model.state_dict(), best_global_path)
             print(f"  --> [Saved] Best global model (acc={best_global_acc:.4f})")
-
+        
+        round_end = time.perf_counter() # Stop the timer
+        round_duration = round_end - round_start
+        round_times.append(round_duration)
+        print(f"\n  [Timing] Iteration {iteration + 1} completed in {round_duration:.2f} seconds")
+    
     # ------------------------------------------------------------------ #
     # Convergence plots — one per client
     # ------------------------------------------------------------------ #
@@ -247,12 +256,20 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
     # Save all results to JSON
     # ------------------------------------------------------------------ #
     print("\n--- Training Complete ---")
+    total_time = sum(round_times)
+    avg_round_time = total_time / len(round_times) if round_times else 0
+
 
     results = {
         "global_metrics_per_iteration": per_iter_global,
         "local_metrics_per_iteration":  per_iter_local,
         "final_best_global_model":      best_global_results,
         "final_best_local_models":      best_local_results,
+        "timing_seconds": {
+            "per_round": round_times,
+            "total_training_time": total_time,
+            "average_round_time": avg_round_time
+        }
     }
 
     results_folder = base_save_dir
