@@ -23,6 +23,7 @@ from server import server
 from scaffold_server import scaffold_server
 from fedprox_server import fedprox_server
 from ditto_server import ditto_server
+from centralized import centralized_training
 import utils as utils
 import models as models
 import evaluate_model as evaluate_model
@@ -128,6 +129,15 @@ def main():
             max_client_participants=max_client_participants,
             project_root=project_root,
             lam=args.lam,
+        )
+    elif args.algorithm == 'centralized':
+        centralized_training(
+            args=args,
+            model=model,
+            device=device,
+            domains_path=domains_path,
+            domains=domains,
+            project_root=project_root,
         )        
 
 if __name__ == "__main__":
