@@ -157,8 +157,8 @@ def load_data(domain_path, key, domain_dataset, window_size=10, step_size=3, bat
     train_dataset = TensorDataset(X_train, y_train)
     test_dataset  = TensorDataset(X_test,  y_test)
 
-    train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
-    test_loader  = DataLoader(test_dataset,  len(test_dataset), shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, num_workers=1, persistent_workers=True)
+    test_loader  = DataLoader(test_dataset,  len(test_dataset), shuffle=False, num_workers=1, persistent_workers=True)
 
 
     # print("X_train:", X_train.shape, "y_train:", y_train.shape)
@@ -262,18 +262,18 @@ def parse_args():
                         help='Sliding window size for sequence generation')
     parser.add_argument('--step_size', type=int, default=2,
                         help='Step size for sliding window')
-    parser.add_argument('--batch_size', type=int, default=64,
+    parser.add_argument('--batch_size', type=int, default=256,
                         help='Batch size for DataLoader')
 
     # Federated learning hyperparameters
-    parser.add_argument('--global_iters', type=int, default=5,
+    parser.add_argument('--global_iters', type=int, default=50,
                         help='Number of global communication rounds')
-    parser.add_argument('--local_epochs', type=int, default=2,
+    parser.add_argument('--local_epochs', type=int, default=5,
                         help='Number of local epochs per domain/client')
     parser.add_argument('--lr', type=float, default=0.001,
                         help='Learning rate for local optimizers')
     parser.add_argument('--algorithm', type=str, default='fedavg',
-                        choices=['fedavg', 'scaffold', 'fedprox', 'ditto'],
+                        choices=['fedavg', 'scaffold', 'fedprox', 'ditto', 'centralized'],
                         help='Federated learning algorithm to use')
     parser.add_argument('--mu', type=float, default=0.01,
                         help='Proximal term constant for FedProx (ignored if not using FedProx)')
