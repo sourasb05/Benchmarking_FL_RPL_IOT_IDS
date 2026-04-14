@@ -89,7 +89,7 @@ class ScaffoldClient:
 
         # Use Adam — same as FedAvg so the base training is identical.
         # The SCAFFOLD correction is applied as a separate post-step nudge.
-        optimizer = optim.Adam(self.local_model.parameters(), lr=self.args.lr)
+        optimizer = optim.Adam(self.local_model.parameters(), lr=self.args.lr, weight_decay=1e-4)
         loader    = self.train_domains_loader[self.domain_keys[time_step]]
         K         = self.args.local_epochs * len(loader)   # total local steps
 
