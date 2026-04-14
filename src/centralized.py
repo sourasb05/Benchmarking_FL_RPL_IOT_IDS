@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import ConcatDataset, DataLoader
 import utils
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
 def centralized_training(args, model, device, domains_path, domains, project_root):
     print("\n" + "="*55)
@@ -94,6 +94,7 @@ def centralized_training(args, model, device, domains_path, domains, project_roo
         test_loss = 0.0
         all_preds = []
         all_targets = []
+        all_probs = []
         
         with torch.no_grad():
             for data, target in central_test_loader:
@@ -112,14 +113,20 @@ def centralized_training(args, model, device, domains_path, domains, project_roo
         prec = precision_score(all_targets, all_preds, average='macro', zero_division=0)
         rec = recall_score(all_targets, all_preds, average='macro', zero_division=0)
         
+        all_probs = F.softmax(output, dim=1)[:, 1] 
+        try:
+            auc_roc = roc_auc_score(all_targets, all_probs)
+        except ValueError:
+            auc_roc = 0.5
+        
         epoch_end = time.perf_counter()
         duration = epoch_end - epoch_start
         epoch_times.append(duration)
         
         print(f"  Epoch [{epoch+1}/{total_epochs}] | Time: {duration:.2f}s | "
               f"Train Loss: {avg_train_loss:.4f} | Test Loss: {avg_test_loss:.4f} | "
-              f"Acc: {acc:.4f} | F1: {f1:.4f} | Prec: {prec:.4f} | Rec: {rec:.4f}")
-              
+              f"Acc: {acc:.4f} | F1: {f1:.4f} | Prec: {prec:.4f} | Rec: {rec:.4f} | AUC: {auc_roc:.4f}")
+
         metrics_history.append({
             "epoch": epoch + 1,
             "train_loss": avg_train_loss,
@@ -128,6 +135,7 @@ def centralized_training(args, model, device, domains_path, domains, project_roo
             "f1": f1,
             "precision": prec,
             "recall": rec,
+            "auc_roc": auc_roc,
             "time_seconds": duration
         })
         

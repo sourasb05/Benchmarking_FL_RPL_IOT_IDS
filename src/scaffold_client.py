@@ -4,7 +4,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import utils
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
+import torch.nn.functional as F
 
 
 class ScaffoldClient:
@@ -149,38 +150,52 @@ class ScaffoldClient:
     # ----------------------------------------------------------------- #
 
     def evaluate_model(self, model_state, time_step):
+        """
+        Evaluate a model (global or local) on this client's test data.
+        Returns loss, accuracy, f1, precision, recall.
+        """
         self.eval_model.load_state_dict(model_state)
         self.eval_model.eval()
 
         total_loss = 0.0
-        all_preds, all_targets = [], []
+        all_preds = []
+        all_targets = []
+        all_probs = []
 
         with torch.no_grad():
             for data, target in self.test_domains_loader[self.domain_keys[time_step]]:
                 data, target = data.to(self.device), target.to(self.device)
-                output, _   = self.eval_model(data)
-                total_loss += self.criterion(output, target).item()
-                preds       = torch.argmax(output, dim=1)
+                output, _ = self.eval_model(data)
+                loss = self.criterion(output, target)
+                total_loss += loss.item()
+                preds = torch.argmax(output, dim=1)
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(target.cpu().numpy())
 
-        n_batches = len(self.test_domains_loader[self.domain_keys[time_step]])
-        loss      = total_loss / n_batches
+        evaluation_loss = total_loss / len(self.test_domains_loader[self.domain_keys[time_step]])
         accuracy  = accuracy_score(all_targets, all_preds)
         f1        = f1_score(all_targets, all_preds, average='macro', zero_division=0)
         precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
         recall    = recall_score(all_targets, all_preds, average='macro', zero_division=0)
 
-        return loss, accuracy, f1, precision, recall
+        all_probs = F.softmax(output, dim=1)[:, 1]  # Assuming binary classification and we want the probability of the positive class
+        all_probs = all_probs.cpu().numpy()
+        try:
+            print(all_targets, all_probs)
+            auc_roc = roc_auc_score(all_targets, all_probs)
+        except ValueError:
+            auc_roc = 0.5
+
+        return evaluation_loss, accuracy, f1, precision, recall, auc_roc
 
     def evaluate_global_model(self, model_state, time_step):
-        loss, acc, f1, prec, rec = self.evaluate_model(model_state, time_step)
+        loss, acc, f1, prec, rec, auc_roc = self.evaluate_model(model_state, time_step)
         print(f"  [Client {self.client_id}] [Global] domain={self.domain_keys[time_step]} "
-              f"Loss={loss:.4f} Acc={acc:.4f} F1={f1:.4f} Prec={prec:.4f} Rec={rec:.4f}")
-        return loss, acc, f1, prec, rec
+              f"Loss={loss:.4f} Acc={acc:.4f} F1={f1:.4f} Prec={prec:.4f} Rec={rec:.4f} AUC={auc_roc:.4f}")
+        return loss, acc, f1, prec, rec, auc_roc
 
     def evaluate_local_model_full(self, time_step):
-        loss, acc, f1, prec, rec = self.evaluate_model(self.local_model.state_dict(), time_step)
+        loss, acc, f1, prec, rec, auc_roc = self.evaluate_model(self.local_model.state_dict(), time_step)
         print(f"  [Client {self.client_id}] [Local]  domain={self.domain_keys[time_step]} "
-              f"Loss={loss:.4f} Acc={acc:.4f} F1={f1:.4f} Prec={prec:.4f} Rec={rec:.4f}")
-        return loss, acc, f1, prec, rec
+              f"Loss={loss:.4f} Acc={acc:.4f} F1={f1:.4f} Prec={prec:.4f} Rec={rec:.4f} AUC={auc_roc:.4f}")
+        return loss, acc, f1, prec, rec, auc_roc
