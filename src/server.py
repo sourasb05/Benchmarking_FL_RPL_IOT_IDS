@@ -47,8 +47,8 @@ def _print_comparison_table(client_list, best_global_results, best_local_results
     """Print a side-by-side table: best global model vs best local model per client."""
     header = (
         f"{'Client':>8} | "
-        f"{'G-Acc':>7} {'G-F1':>7} {'G-Prec':>8} {'G-Rec':>7} | "
-        f"{'L-Acc':>7} {'L-F1':>7} {'L-Prec':>8} {'L-Rec':>7}"
+        f"{'G-Acc':>7} {'G-F1':>7} {'G-Prec':>8} {'G-Rec':>7} {'G-AUC':>7} | "
+        f"{'L-Acc':>7} {'L-F1':>7} {'L-Prec':>8} {'L-Rec':>7} {'L-AUC':>7}"
     )
     sep = "-" * len(header)
     print(f"\n{sep}")
@@ -63,8 +63,8 @@ def _print_comparison_table(client_list, best_global_results, best_local_results
         l = best_local_results[cid]
         print(
             f"{cid:>8} | "
-            f"{g['accuracy']:>7.4f} {g['f1']:>7.4f} {g['precision']:>8.4f} {g['recall']:>7.4f} | "
-            f"{l['accuracy']:>7.4f} {l['f1']:>7.4f} {l['precision']:>8.4f} {l['recall']:>7.4f}"
+            f"{g['accuracy']:>7.4f} {g['f1']:>7.4f} {g['precision']:>8.4f} {g['recall']:>7.4f} {g['auc_roc']:>7.4f} | "
+            f"{l['accuracy']:>7.4f} {l['f1']:>7.4f} {l['precision']:>8.4f} {l['recall']:>7.4f} {l['auc_roc']:>7.4f}"
         )
 
     def _mean(d, k):
@@ -74,9 +74,9 @@ def _print_comparison_table(client_list, best_global_results, best_local_results
     print(
         f"{'AVG':>8} | "
         f"{_mean(best_global_results,'accuracy'):>7.4f} {_mean(best_global_results,'f1'):>7.4f} "
-        f"{_mean(best_global_results,'precision'):>8.4f} {_mean(best_global_results,'recall'):>7.4f} | "
+        f"{_mean(best_global_results,'precision'):>8.4f} {_mean(best_global_results,'recall'):>7.4f} {_mean(best_global_results,'auc_roc'):>7.4f} | "
         f"{_mean(best_local_results,'accuracy'):>7.4f} {_mean(best_local_results,'f1'):>7.4f} "
-        f"{_mean(best_local_results,'precision'):>8.4f} {_mean(best_local_results,'recall'):>7.4f}"
+        f"{_mean(best_local_results,'precision'):>8.4f} {_mean(best_local_results,'recall'):>7.4f} {_mean(best_local_results,'auc_roc'):>7.4f}"
     )
     print(sep)
 
@@ -156,7 +156,7 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
         print(f"\n  [Step 1] Local training & evaluation")
         local_states = []
         per_iter_local[iteration] = {}
-        l_totals = dict(loss=0.0, accuracy=0.0, f1=0.0, precision=0.0, recall=0.0)
+        l_totals = dict(loss=0.0, accuracy=0.0, f1=0.0, precision=0.0, recall=0.0, auc_roc=0.0)
 
         for c in client_list:
             # train — updates c.local_model, returns its state_dict
@@ -164,8 +164,8 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
             local_states.append(trained_state)
 
             # evaluate the just-trained local model (c.local_model still holds it)
-            loss, acc, f1, prec, rec = c.evaluate_local_model_full(time_step)
-            row = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec)
+            loss, acc, f1, prec, rec, auc_roc= c.evaluate_local_model_full(time_step)
+            row = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec, auc_roc=auc_roc)
             per_iter_local[iteration][c.client_id] = row
             client_local_hist[c.client_id].append(row)
             for k in l_totals:
@@ -180,7 +180,7 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
 
         avg_l = {k: v / len(client_list) for k, v in l_totals.items()}
         print(f"\n  [Avg Local]  Acc={avg_l['accuracy']:.4f}  F1={avg_l['f1']:.4f}  "
-              f"Prec={avg_l['precision']:.4f}  Rec={avg_l['recall']:.4f}  Loss={avg_l['loss']:.4f}")
+              f"Prec={avg_l['precision']:.4f}  Rec={avg_l['recall']:.4f}  Loss={avg_l['loss']:.4f} AUC={avg_l['auc_roc']:.4f}")
 
         # -------------------------------------------------------------- #
         # STEP 2 — FedAvg aggregation → global model evaluation
@@ -193,11 +193,11 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
         model.load_state_dict(global_state)
 
         per_iter_global[iteration] = {}
-        g_totals = dict(loss=0.0, accuracy=0.0, f1=0.0, precision=0.0, recall=0.0)
+        g_totals = dict(loss=0.0, accuracy=0.0, f1=0.0, precision=0.0, recall=0.0, auc_roc=0.0)
 
         for c in client_list:
-            loss, acc, f1, prec, rec = c.evaluate_global_model(model.state_dict(), time_step)
-            row = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec)
+            loss, acc, f1, prec, rec, auc_roc = c.evaluate_global_model(model.state_dict(), time_step)
+            row = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec, auc_roc=auc_roc)
             per_iter_global[iteration][c.client_id] = row
             client_global_hist[c.client_id].append(row)
             for k in g_totals:
@@ -205,7 +205,7 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
 
         avg_g = {k: v / len(client_list) for k, v in g_totals.items()}
         print(f"\n  [Avg Global] Acc={avg_g['accuracy']:.4f}  F1={avg_g['f1']:.4f}  "
-              f"Prec={avg_g['precision']:.4f}  Rec={avg_g['recall']:.4f}  Loss={avg_g['loss']:.4f}")
+              f"Prec={avg_g['precision']:.4f}  Rec={avg_g['recall']:.4f}  Loss={avg_g['loss']:.4f} AUC={avg_g['auc_roc']:.4f}")
 
         # save best global model
         if avg_g["accuracy"] > best_global_acc:
@@ -240,8 +240,8 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
 
     best_global_results = {}
     for c in client_list:
-        loss, acc, f1, prec, rec = c.evaluate_global_model(model.state_dict(), time_step)
-        best_global_results[c.client_id] = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec)
+        loss, acc, f1, prec, rec, auc_roc = c.evaluate_global_model(model.state_dict(), time_step)
+        best_global_results[c.client_id] = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec, auc_roc=auc_roc)
 
     # ------------------------------------------------------------------ #
     # Final evaluation — best local model for each client
@@ -250,10 +250,10 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
     best_local_results = {}
     for c in client_list:
         local_path = os.path.join(models_dir, f"best_local_model_client_{c.client_id}.pth")
-        loss, acc, f1, prec, rec = c.evaluate_model(
+        loss, acc, f1, prec, rec, auc_roc = c.evaluate_model(
             torch.load(local_path, map_location=device), time_step
         )
-        best_local_results[c.client_id] = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec)
+        best_local_results[c.client_id] = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec, auc_roc=auc_roc)
         print(f"  [Client {c.client_id}] [Best Local] "
               f"Acc={acc:.4f}  F1={f1:.4f}  Prec={prec:.4f}  Rec={rec:.4f}  Loss={loss:.4f}")
 

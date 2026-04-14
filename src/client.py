@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import copy
 import utils
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
 class Client:
     def __init__(self, client_id, args, domain_path, assigned_domains, device, model):
@@ -26,7 +27,7 @@ class Client:
         # print(f"client {self.client_id} Loaded data for {len(self.train_domains_loader)} domains: {list(self.train_domains_loader.keys())}")
     
         self.domain_keys = list(self.train_domains_loader.keys())
-        self.optimizer = optim.Adam(self.local_model.parameters(), lr=self.args.lr)
+        self.optimizer = optim.Adam(self.local_model.parameters(), lr=self.args.lr, weight_decay=1e-4)
         self.criterion = nn.CrossEntropyLoss()
     def train(self, global_model_state, time_step):
         """
@@ -110,6 +111,7 @@ class Client:
         total_loss = 0.0
         all_preds = []
         all_targets = []
+        all_probs = []
 
         with torch.no_grad():
             for data, target in self.test_domains_loader[self.domain_keys[time_step]]:
@@ -121,23 +123,31 @@ class Client:
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(target.cpu().numpy())
 
+                probs = F.softmax(output, dim=1)[:, 1] 
+                all_probs.extend(probs.cpu().numpy())
+
         evaluation_loss = total_loss / len(self.test_domains_loader[self.domain_keys[time_step]])
         accuracy  = accuracy_score(all_targets, all_preds)
         f1        = f1_score(all_targets, all_preds, average='macro', zero_division=0)
         precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
         recall    = recall_score(all_targets, all_preds, average='macro', zero_division=0)
 
-        return evaluation_loss, accuracy, f1, precision, recall
+        try:
+            auc_roc = roc_auc_score(all_targets, all_probs)
+        except ValueError:
+            auc_roc = 0.5
+
+        return evaluation_loss, accuracy, f1, precision, recall, auc_roc
 
     def evaluate_global_model(self, model_state, time_step):
-        loss, acc, f1, prec, rec = self.evaluate_model(model_state, time_step)
+        loss, acc, f1, prec, rec, auc_roc = self.evaluate_model(model_state, time_step)
         print(f"  [Client {self.client_id}] [Global] domain={self.domain_keys[time_step]} "
-              f"Loss={loss:.4f} Acc={acc:.4f} F1={f1:.4f} Prec={prec:.4f} Rec={rec:.4f}")
-        return loss, acc, f1, prec, rec
+              f"Loss={loss:.4f} Acc={acc:.4f} F1={f1:.4f} Prec={prec:.4f} Rec={rec:.4f}" f" AUC={auc_roc:.4f}")
+        return loss, acc, f1, prec, rec, auc_roc
 
     def evaluate_local_model_full(self, time_step):
-        loss, acc, f1, prec, rec = self.evaluate_model(self.local_model.state_dict(), time_step)
+        loss, acc, f1, prec, rec, auc_roc = self.evaluate_model(self.local_model.state_dict(), time_step)
         print(f"  [Client {self.client_id}] [Local]  domain={self.domain_keys[time_step]} "
-              f"Loss={loss:.4f} Acc={acc:.4f} F1={f1:.4f} Prec={prec:.4f} Rec={rec:.4f}")
-        return loss, acc, f1, prec, rec
+              f"Loss={loss:.4f} Acc={acc:.4f} F1={f1:.4f} Prec={prec:.4f} Rec={rec:.4f}" f" AUC={auc_roc:.4f}")
+        return loss, acc, f1, prec, rec, auc_roc
     
