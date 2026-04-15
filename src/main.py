@@ -26,7 +26,7 @@ from ditto_server import ditto_server
 from centralized import centralized_training
 import utils as utils
 import models as models
-import evaluate_model as evaluate_model
+
 
 
 def main():
@@ -46,10 +46,10 @@ def main():
 
     client_list = []
 
-    max_client_participants = 12
+    max_client_participants = 48
 
-    domain_keys = [key for key in domains.keys() if "worstparent" in key]
-    #domain_keys = [key for key in domains.keys()]
+    #domain_keys = [key for key in domains.keys() if "worstparent" in key]
+    domain_keys = [key for key in domains.keys()]
     
     print(f"{len(domain_keys)}domain_keys: {domain_keys}")
     client_distributions = {i: [] for i in range(max_client_participants)}
