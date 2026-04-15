@@ -81,7 +81,7 @@ class FedProxClient:
             avg_loss = epoch_loss / len(self.train_domains_loader[self.domain_keys[time_step]])
             self.local_loss_history.append(avg_loss)
             # print(f"  [Client {self.client_id}] Epoch {epoch+1}/{self.args.local_epochs}, Loss: {avg_loss:.4f}")
-            self.evaluate_local_model(self.local_model.state_dict(), time_step=time_step)
+            #self.evaluate_local_model(self.local_model.state_dict(), time_step=time_step)
 
            
             
@@ -136,6 +136,8 @@ class FedProxClient:
                 preds = torch.argmax(output, dim=1)
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(target.cpu().numpy())
+                probs = F.softmax(output, dim=1)[:, 1] 
+                all_probs.extend(probs.cpu().numpy())
 
         evaluation_loss = total_loss / len(self.test_domains_loader[self.domain_keys[time_step]])
         accuracy  = accuracy_score(all_targets, all_preds)
@@ -143,10 +145,7 @@ class FedProxClient:
         precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
         recall    = recall_score(all_targets, all_preds, average='macro', zero_division=0)
 
-        all_probs = F.softmax(output, dim=1)[:, 1]  # Assuming binary classification and we want the probability of the positive class
-        all_probs = all_probs.cpu().numpy()
         try:
-            print(all_targets, all_probs)
             auc_roc = roc_auc_score(all_targets, all_probs)
         except ValueError:
             auc_roc = 0.5
