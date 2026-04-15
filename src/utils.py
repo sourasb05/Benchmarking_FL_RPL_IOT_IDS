@@ -47,11 +47,14 @@ def extract_index(path):
     return int(m.group(1)) if m else 10**9  # push unknowns to end
 DROP_COLS = ["Unnamed: 0"]
 def load_csv(path):
-    
     df = pd.read_csv(path, encoding="utf-8", encoding_errors="ignore")
     for c in DROP_COLS:
         if c in df.columns:
             df = df.drop(columns=[c])
+    
+    float_cols = df.select_dtypes(include=['float64']).columns
+    df[float_cols] = df[float_cols].astype('float32')
+    
     assert "label" in df.columns, f"'label' column missing in {os.path.basename(path)}"
     return df
 
@@ -157,8 +160,8 @@ def load_data(domain_path, key, domain_dataset, window_size=10, step_size=3, bat
     train_dataset = TensorDataset(X_train, y_train)
     test_dataset  = TensorDataset(X_test,  y_test)
 
-    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, num_workers=1, persistent_workers=True)
-    test_loader  = DataLoader(test_dataset,  len(test_dataset), shuffle=False, num_workers=1, persistent_workers=True)
+    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, num_workers=0)
+    test_loader  = DataLoader(test_dataset,  len(test_dataset), shuffle=False, num_workers=0)
 
 
     # print("X_train:", X_train.shape, "y_train:", y_train.shape)
