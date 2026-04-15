@@ -164,7 +164,7 @@ def ditto_server(args, model, device, domains_path, client_distributions, max_cl
             if acc > best_local_acc[c.client_id]:
                 best_local_acc[c.client_id] = acc
                 local_path = os.path.join(models_dir, f"best_local_model_client_{c.client_id}.pth")
-                torch.save(c.local_model.state_dict(), local_path)
+                torch.save(c.personalized_model.state_dict(), local_path)
                 print(f"  --> [Saved] Best local model client {c.client_id} (acc={acc:.4f})")
 
         avg_l = {k: v / len(client_list) for k, v in l_totals.items()}

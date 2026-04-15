@@ -6,6 +6,8 @@ import torch.optim as optim
 from torch.utils.data import ConcatDataset, DataLoader
 import utils
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
+import torch.nn.functional as F
+import numpy as np
 
 def centralized_training(args, model, device, domains_path, domains, project_root):
     print("\n" + "="*55)
@@ -106,17 +108,19 @@ def centralized_training(args, model, device, domains_path, domains, project_roo
                 preds = torch.argmax(output, dim=1)
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(target.cpu().numpy())
-                
+                probs = F.softmax(output, dim=1)[:, 1]
+                all_probs.extend(probs.cpu().numpy())
+    
         avg_test_loss = test_loss / len(central_test_loader)
         acc = accuracy_score(all_targets, all_preds)
         f1 = f1_score(all_targets, all_preds, average='macro', zero_division=0)
         prec = precision_score(all_targets, all_preds, average='macro', zero_division=0)
         rec = recall_score(all_targets, all_preds, average='macro', zero_division=0)
         
-        all_probs = F.softmax(output, dim=1)[:, 1] 
+
         try:
             auc_roc = roc_auc_score(all_targets, all_probs)
-        except ValueError:
+        except ValueError as e:
             auc_roc = 0.5
         
         epoch_end = time.perf_counter()

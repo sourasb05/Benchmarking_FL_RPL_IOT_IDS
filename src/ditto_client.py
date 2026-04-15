@@ -48,6 +48,8 @@ class DittoClient:
         
         self.local_model.load_state_dict(copy.deepcopy(global_model_state))
         self.local_model.train()
+
+        global_ref = {n: p.clone().detach() for n, p in self.local_model.named_parameters()}
         
         # 2. Setup Optimizer and Criterion
         
@@ -69,7 +71,6 @@ class DittoClient:
                 torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), max_norm=5.0)
                 
                 self.optimizer.step()
-        global_ref = {n: p.clone().detach() for n, p in self.local_model.named_parameters()}
 
         # --- Ditto proximal update ---
         self.personalized_model.train()
@@ -146,6 +147,8 @@ class DittoClient:
                 preds = torch.argmax(output, dim=1)
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(target.cpu().numpy())
+                probs = F.softmax(output, dim=1)[:, 1]  
+                all_probs.extend(probs.cpu().numpy())
 
         evaluation_loss = total_loss / len(self.test_domains_loader[self.domain_keys[time_step]])
         accuracy  = accuracy_score(all_targets, all_preds)
@@ -153,10 +156,7 @@ class DittoClient:
         precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
         recall    = recall_score(all_targets, all_preds, average='macro', zero_division=0)
 
-        all_probs = F.softmax(output, dim=1)[:, 1]  # Assuming binary classification and we want the probability of the positive class
-        all_probs = all_probs.cpu().numpy()
         try:
-            print(all_targets, all_probs)
             auc_roc = roc_auc_score(all_targets, all_probs)
         except ValueError:
             auc_roc = 0.5
@@ -170,7 +170,7 @@ class DittoClient:
         return loss, acc, f1, prec, rec, auc_roc
 
     def evaluate_local_model_full(self, time_step):
-        loss, acc, f1, prec, rec, auc_roc = self.evaluate_model(self.local_model.state_dict(), time_step)
+        loss, acc, f1, prec, rec, auc_roc = self.evaluate_model(self.personalized_model.state_dict(), time_step)
         print(f"  [Client {self.client_id}] [Local]  domain={self.domain_keys[time_step]} "
               f"Loss={loss:.4f} Acc={acc:.4f} F1={f1:.4f} Prec={prec:.4f} Rec={rec:.4f} AUC={auc_roc:.4f}")
         return loss, acc, f1, prec, rec, auc_roc

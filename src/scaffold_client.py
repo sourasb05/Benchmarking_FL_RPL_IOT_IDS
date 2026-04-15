@@ -171,15 +171,15 @@ class ScaffoldClient:
                 preds = torch.argmax(output, dim=1)
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(target.cpu().numpy())
-
+                probs = F.softmax(output, dim=1)[:, 1]
+                all_probs.extend(probs.cpu().numpy())
+                
         evaluation_loss = total_loss / len(self.test_domains_loader[self.domain_keys[time_step]])
         accuracy  = accuracy_score(all_targets, all_preds)
         f1        = f1_score(all_targets, all_preds, average='macro', zero_division=0)
         precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
         recall    = recall_score(all_targets, all_preds, average='macro', zero_division=0)
 
-        all_probs = F.softmax(output, dim=1)[:, 1]  # Assuming binary classification and we want the probability of the positive class
-        all_probs = all_probs.cpu().numpy()
         try:
             print(all_targets, all_probs)
             auc_roc = roc_auc_score(all_targets, all_probs)
