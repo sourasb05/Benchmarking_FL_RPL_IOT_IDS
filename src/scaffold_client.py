@@ -181,7 +181,6 @@ class ScaffoldClient:
         recall    = recall_score(all_targets, all_preds, average='macro', zero_division=0)
 
         try:
-            print(all_targets, all_probs)
             auc_roc = roc_auc_score(all_targets, all_probs)
         except ValueError:
             auc_roc = 0.5
