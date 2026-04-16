@@ -27,7 +27,6 @@ class Client:
         # print(f"client {self.client_id} Loaded data for {len(self.train_domains_loader)} domains: {list(self.train_domains_loader.keys())}")
     
         self.domain_keys = list(self.train_domains_loader.keys())
-        self.optimizer = optim.Adam(self.local_model.parameters(), lr=self.args.lr, weight_decay=1e-4)
         self.criterion = nn.CrossEntropyLoss()
     def train(self, global_model_state, time_step):
         """
@@ -41,7 +40,7 @@ class Client:
         self.local_model.train()
 
         # 2. Setup Optimizer and Criterion
-        
+        self.optimizer = optim.Adam(self.local_model.parameters(), lr=self.args.lr, weight_decay=1e-4)
 
         # print(f"  [Client {self.client_id}] Starting local training...")
         # print(f"  [Client {self.client_id}] Training on domains: {list(self.train_domains_loader.keys())}")

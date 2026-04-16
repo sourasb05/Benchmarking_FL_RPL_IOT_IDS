@@ -278,6 +278,8 @@ def parse_args():
     parser.add_argument('--algorithm', type=str, default='fedavg',
                         choices=['fedavg', 'scaffold', 'fedprox', 'ditto', 'centralized'],
                         help='Federated learning algorithm to use')
+    parser.add_argument('--client_fraction', type=float, default=1.0,
+                        help='Fraction of clients to participate in each round (e.g., 0.1 for 10%%)')
     parser.add_argument('--mu', type=float, default=0.01,
                         help='Proximal term constant for FedProx (ignored if not using FedProx)')
     parser.add_argument('--lam', type=float, default=0.5,
