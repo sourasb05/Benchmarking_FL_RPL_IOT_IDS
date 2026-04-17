@@ -144,12 +144,11 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
     best_local_acc  = {c.client_id: -1.0 for c in client_list}
 
     round_times = []
-
     # ------------------------------------------------------------------ #
     # Global iteration loop
     # ------------------------------------------------------------------ #
     for iteration in range(args.global_iters):
-        round_start = time.perf_counter() # Start the timer
+        round_start = time.perf_counter() 
         print(f"\n{'='*55}")
         print(f"  Global Iteration {iteration + 1} / {args.global_iters}")
         print(f"{'='*55}")
@@ -171,7 +170,7 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
             local_states.append(trained_state)
 
             # evaluate the just-trained local model (c.local_model still holds it)
-            loss, acc, f1, prec, rec, auc_roc= c.evaluate_local_model_full(time_step)
+            loss, acc, f1, prec, rec, auc_roc = c.evaluate_local_model_full(time_step)
            
             row = dict(iteration=iteration+1, loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec, auc_roc=auc_roc)
            
@@ -264,7 +263,7 @@ def server(args, model, device, domains_path, client_distributions, max_client_p
         )
         best_local_results[c.client_id] = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec, auc_roc=auc_roc)
         print(f"  [Client {c.client_id}] [Best Local] "
-              f"Acc={acc:.4f}  F1={f1:.4f}  Prec={prec:.4f}  Rec={rec:.4f}  Loss={loss:.4f}")
+              f"Acc={acc:.4f}  F1={f1:.4f}  Prec={prec:.4f}  Rec={rec:.4f}  Loss={loss:.4f} AUC={auc_roc:.4f}")
 
     # ------------------------------------------------------------------ #
     # Side-by-side comparison table

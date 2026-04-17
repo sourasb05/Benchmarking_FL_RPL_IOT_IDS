@@ -7,7 +7,7 @@ import torch
 from fedprox_client import FedProxClient
 from utils import save_results_as_json
 import time
-
+import random
 
 # ------------------------------------------------------------------ #
 # Helpers
@@ -18,18 +18,23 @@ def _plot_client_convergence(client_id, global_hist, local_hist, plots_dir):
     2-panel convergence plot per client: Accuracy and F1 (local vs global).
     global_hist / local_hist: list of dicts {accuracy, f1, precision, recall, loss}
     """
-    iters = list(range(1, len(global_hist) + 1))
+    # X-axis for the global model (which updates every round)
+    global_iters = list(range(1, len(global_hist) + 1))
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    fig.suptitle(f"Client {client_id} — FedProx Convergence (Local vs Global)", fontsize=13)
+    fig.suptitle(f"Client {client_id} — Fedprox Convergence (Local vs Global)", fontsize=13)
 
     for ax, metric, ylabel in zip(
         axes,
         ["accuracy", "f1"],
         ["Accuracy", "F1 Score (macro)"],
     ):
-        ax.plot(iters, [m[metric] for m in global_hist], marker="o", label="Global model")
-        ax.plot(iters, [m[metric] for m in local_hist],  marker="s", linestyle="--", label="Local model")
+        ax.plot(global_iters, [m[metric] for m in global_hist], marker="o", label="Global model")
+        
+        if local_hist:
+            local_iters = [m.get("iteration", i+1) for i, m in enumerate(local_hist)]
+            ax.plot(local_iters, [m[metric] for m in local_hist],  marker="s", linestyle="--", label="Local model")
+            
         ax.set_xlabel("Global Iteration")
         ax.set_ylabel(ylabel)
         ax.set_title(ylabel)
@@ -37,7 +42,7 @@ def _plot_client_convergence(client_id, global_hist, local_hist, plots_dir):
         ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    path = os.path.join(plots_dir, f"fedprox_client_{client_id}_convergence.png")
+    path = os.path.join(plots_dir, f"client_{client_id}_convergence.png")
     plt.savefig(path, dpi=120)
     plt.close(fig)
     return path
@@ -126,13 +131,12 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
     best_global_acc = -1.0
     best_local_acc  = {c.client_id: -1.0 for c in client_list}
 
-    round_times = []  # To store time taken for each global iteration
-
+    round_times = []
     # ------------------------------------------------------------------ #
     # Global iteration loop
     # ------------------------------------------------------------------ #
     for iteration in range(args.global_iters):
-        round_start = time.perf_counter() 
+        round_start = time.perf_counter()
         print(f"\n{'='*55}")
         print(f"  Global Iteration {iteration + 1} / {args.global_iters}")
         print(f"{'='*55}")
@@ -146,15 +150,17 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
         local_states = []
         per_iter_local[iteration] = {}
         l_totals = dict(loss=0.0, accuracy=0.0, f1=0.0, precision=0.0, recall=0.0, auc_roc=0.0)
-
-        for c in client_list:
+        selected_clients = random.sample(client_list, max(1, int(len(client_list) * args.client_fraction)))
+        for c in selected_clients:
             # train — updates c.local_model, returns its state_dict
             trained_state = c.train(model.state_dict(), time_step=time_step)
             local_states.append(trained_state)
 
             # evaluate the just-trained local model (c.local_model still holds it)
             loss, acc, f1, prec, rec, auc_roc = c.evaluate_local_model_full(time_step)
-            row = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec, auc_roc=auc_roc)
+            
+            row = dict(iteration=iteration+1, loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec, auc_roc=auc_roc)
+            
             per_iter_local[iteration][c.client_id] = row
             client_local_hist[c.client_id].append(row)
             for k in l_totals:
@@ -167,7 +173,7 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
                 torch.save(c.local_model.state_dict(), local_path)
                 print(f"  --> [Saved] Best local model client {c.client_id} (acc={acc:.4f})")
 
-        avg_l = {k: v / len(client_list) for k, v in l_totals.items()}
+        avg_l = {k: v / len(selected_clients) for k, v in l_totals.items()}
         print(f"\n  [Avg Local]  Acc={avg_l['accuracy']:.4f}  F1={avg_l['f1']:.4f}  "
               f"Prec={avg_l['precision']:.4f}  Rec={avg_l['recall']:.4f}  Loss={avg_l['loss']:.4f} AUC={avg_l['auc_roc']:.4f}")
 
@@ -207,7 +213,6 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
         round_duration = round_end - round_start
         round_times.append(round_duration)
         print(f"\n  [Timing] Iteration {iteration + 1} completed in {round_duration:.2f} seconds")
-    
     # ------------------------------------------------------------------ #
     # Convergence plots — one per client
     # ------------------------------------------------------------------ #
@@ -259,12 +264,12 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
     total_time = sum(round_times)
     avg_round_time = total_time / len(round_times) if round_times else 0
 
-
     results = {
         "global_metrics_per_iteration": per_iter_global,
         "local_metrics_per_iteration":  per_iter_local,
         "final_best_global_model":      best_global_results,
         "final_best_local_models":      best_local_results,
+        "hyperparameters": args.__dict__,
         "timing_seconds": {
             "per_round": round_times,
             "total_training_time": total_time,
