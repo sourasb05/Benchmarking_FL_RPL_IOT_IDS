@@ -27,7 +27,6 @@ class DittoClient:
         # print(f"client {self.client_id} Loaded data for {len(self.train_domains_loader)} domains: {list(self.train_domains_loader.keys())}")
     
         self.domain_keys = list(self.train_domains_loader.keys())
-        self.optimizer = optim.Adam(self.local_model.parameters(), lr=self.args.lr, weight_decay=1e-4)
         self.criterion = nn.CrossEntropyLoss()
         
         # Ditto-specific attributes
@@ -48,6 +47,8 @@ class DittoClient:
         
         self.local_model.load_state_dict(copy.deepcopy(global_model_state))
         self.local_model.train()
+
+        self.optimizer = optim.Adam(self.local_model.parameters(), lr=self.args.lr, weight_decay=1e-4)
 
         global_ref = {n: p.clone().detach() for n, p in self.local_model.named_parameters()}
         
