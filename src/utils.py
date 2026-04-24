@@ -19,26 +19,23 @@ def safe_minmax_normalize(df, global_min, global_max, label_col="label"):
     return out
 
 def seq_maker(df, sequence_length=10, label_col="label"):
-    df_feat = df.drop(columns=[label_col])
+    # 1. Konvertera direkt till numpy arrays (gör det 100x snabbare)
+    feats = df.drop(columns=[label_col]).values
     labels = df[label_col].astype(int).values
 
-    attack_idxs = np.where(labels == 1)[0]
-    if len(attack_idxs) == 0:
-        start_attack = len(labels) + sequence_length   # all zeros
-    else:
-        start_attack = max(0, attack_idxs[0] - sequence_length)
+    n_samples = len(feats) - sequence_length
+    
+    if n_samples <= 0:
+        return pd.DataFrame(columns=[*range(feats.shape[1]*sequence_length), "label"])
 
-    sequences = []
-    for i in range(len(df_feat) - sequence_length):
-        sequences.append(df_feat.iloc[i:i+sequence_length].values.flatten())
+    # 2. Skapa sekvenserna med snabb numpy list comprehension istället för Pandas .iloc
+    sequences = [feats[i : i + sequence_length].flatten() for i in range(n_samples)]
+    seq_labels = labels[sequence_length - 1 : n_samples + sequence_length - 1]
 
-    if not sequences:
-        return pd.DataFrame(columns=[*range(df_feat.shape[1]*sequence_length), "label"])
-
+    # 3. Skapa dataframe enbart en gång i slutet
     seq_df = pd.DataFrame(sequences)
-    zeros = [0] * min(start_attack, len(seq_df))
-    ones  = [1] * (len(seq_df) - len(zeros))
-    seq_df["label"] = zeros + ones
+    seq_df["label"] = seq_labels
+    
     return seq_df
 
 def extract_index(path):
@@ -83,7 +80,7 @@ def create_sliding_windows(X, y, window_size, step_size):
     return np.array(sequences), np.array(labels)
 
 
-def load_data(domain_path, key, domain_dataset, window_size=10, step_size=3, batch_size=128, n_raw_features=None):
+def load_data(domain_path, key, domain_dataset, window_size=10, step_size=3, batch_size=128, n_raw_features=None, device="cpu"):
 
     files = sorted(domain_dataset, key=extract_index)[:20]  # ensure exactly 20, ordered
 
@@ -139,10 +136,10 @@ def load_data(domain_path, key, domain_dataset, window_size=10, step_size=3, bat
     # -----------------------
     # Tensors & Dataloaders
     # -----------------------
-    X_train = torch.tensor(seq_train.iloc[:, :-1].values, dtype=torch.float32)
-    y_train = torch.tensor(seq_train.iloc[:,  -1].values.astype(int), dtype=torch.long)
-    X_test  = torch.tensor(seq_test.iloc[:,  :-1].values, dtype=torch.float32)
-    y_test  = torch.tensor(seq_test.iloc[:,   -1].values.astype(int), dtype=torch.long)
+    X_train = torch.tensor(seq_train.iloc[:, :-1].values, dtype=torch.float32).to(device)
+    y_train = torch.tensor(seq_train.iloc[:,  -1].values.astype(int), dtype=torch.long).to(device)
+    X_test  = torch.tensor(seq_test.iloc[:,  :-1].values, dtype=torch.float32).to(device)
+    y_test  = torch.tensor(seq_test.iloc[:,   -1].values.astype(int), dtype=torch.long).to(device)
 
     X_train = torch.nan_to_num(X_train, nan=0.0)
     X_test  = torch.nan_to_num(X_test,  nan=0.0)

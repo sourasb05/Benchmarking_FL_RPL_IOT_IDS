@@ -33,7 +33,8 @@ def centralized_training(args, model, device, domains_path, domains, project_roo
             window_size=args.window_size, 
             step_size=args.step_size, 
             batch_size=args.batch_size, 
-            n_raw_features=getattr(args, 'n_raw_features', None)
+            n_raw_features=getattr(args, 'n_raw_features', None),
+            device = "cpu"
         )
         # Extract the underlying TensorDataset
         all_train_datasets.append(tr_l.dataset)
@@ -44,8 +45,8 @@ def centralized_training(args, model, device, domains_path, domains, project_roo
     central_test_dataset = ConcatDataset(all_test_datasets)
 
     # Create master DataLoaders
-    central_train_loader = DataLoader(central_train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=8, persistent_workers=True)
-    central_test_loader = DataLoader(central_test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=8, persistent_workers=True)
+    central_train_loader = DataLoader(central_train_dataset, batch_size=args.batch_size, shuffle=True)
+    central_test_loader = DataLoader(central_test_dataset, batch_size=args.batch_size, shuffle=False)
 
     print(f"Total Centralized Training Samples: {len(central_train_dataset)}")
     print(f"Total Centralized Testing Samples:  {len(central_test_dataset)}")
@@ -76,18 +77,17 @@ def centralized_training(args, model, device, domains_path, domains, project_roo
         
         for data, target in central_train_loader:
             data, target = data.to(device), target.to(device)
-            
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             output, _ = model(data)
             loss = criterion(output, target)
             loss.backward()
             
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
             
-            total_loss += loss.item()
+            total_loss += loss.detach()
             
-        avg_train_loss = total_loss / len(central_train_loader)
+        avg_train_loss = total_loss.item() / len(central_train_loader)
         
         # -------------------------------------------------------------- #
         # STEP 4: Evaluation
@@ -103,20 +103,26 @@ def centralized_training(args, model, device, domains_path, domains, project_roo
                 data, target = data.to(device), target.to(device)
                 output, _ = model(data)
                 loss = criterion(output, target)
-                test_loss += loss.item()
+                
+                test_loss += loss.detach() 
                 
                 preds = torch.argmax(output, dim=1)
-                all_preds.extend(preds.cpu().numpy())
-                all_targets.extend(target.cpu().numpy())
                 probs = F.softmax(output, dim=1)[:, 1]
-                all_probs.extend(probs.cpu().numpy())
+                
+                all_preds.append(preds)
+                all_targets.append(target)
+                all_probs.append(probs)
     
-        avg_test_loss = test_loss / len(central_test_loader)
+        all_preds = torch.cat(all_preds).cpu().numpy()
+        all_targets = torch.cat(all_targets).cpu().numpy()
+        all_probs = torch.cat(all_probs).cpu().numpy()
+        
+        avg_test_loss = test_loss.item() / len(central_test_loader)
+        
         acc = accuracy_score(all_targets, all_preds)
         f1 = f1_score(all_targets, all_preds, average='macro', zero_division=0)
         prec = precision_score(all_targets, all_preds, average='macro', zero_division=0)
         rec = recall_score(all_targets, all_preds, average='macro', zero_division=0)
-        
 
         try:
             auc_roc = roc_auc_score(all_targets, all_probs)

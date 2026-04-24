@@ -22,10 +22,7 @@ class LSTMClassifier(nn.Module):
         batch_size = x.size(0)
         device = x.device
 
-        h0 = torch.zeros(self.num_layers, batch_size, self.hidden_dim, device=device)
-        c0 = torch.zeros(self.num_layers, batch_size, self.hidden_dim, device=device)
-
-        out, (h_n, c_n) = self.lstm(x, (h0, c0))   # out: (B, T, H)
+        out, (h_n, c_n) = self.lstm(x)   # out: (B, T, H)
 
         # Take last time step
         feat = out[:, -1, :]                        # (B, H)
@@ -71,10 +68,7 @@ class LSTMModelWithAttention(nn.Module):
         batch_size = x.size(0)
         device = x.device
 
-        h0 = torch.zeros(self.num_layers * self.num_directions, batch_size, self.hidden_size).to(device)
-        c0 = torch.zeros(self.num_layers * self.num_directions, batch_size, self.hidden_size).to(device)
-
-        lstm_out, _ = self.lstm(x, (h0, c0))  # [batch_size, seq_len, hidden_dim*num_directions]
+        lstm_out, _ = self.lstm(x) # [batch_size, seq_len, hidden_dim*num_directions]
 
         # Apply attention mechanism
         context = self.attention_net(lstm_out)

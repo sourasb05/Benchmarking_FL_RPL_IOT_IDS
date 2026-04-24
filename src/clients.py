@@ -31,7 +31,8 @@ class Client:
                 window_size=self.args.window_size, 
                 step_size=self.args.step_size, 
                 batch_size=self.args.batch_size, 
-                n_raw_features=getattr(self.args, 'n_raw_features', None)
+                n_raw_features=getattr(self.args, 'n_raw_features', None),
+                device = device
             )
             
         self.domain_keys = list(self.train_domains_loader.keys())
@@ -77,18 +78,17 @@ class Client:
         for epoch in range(self.args.local_epochs):
             epoch_loss = 0.0
             for data, target in self.train_domains_loader[self.domain_keys[time_step]]:
-                data, target = data.to(self.device), target.to(self.device)
                 
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 output, _ = self.local_model(data)
                 loss = self.criterion(output, target)
                 loss.backward()
                 
-                torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), max_norm=5.0)
+                #torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), max_norm=5.0)
                 optimizer.step()
-                epoch_loss += loss.item()
+                epoch_loss += loss.detach()
 
-            avg_loss = epoch_loss / len(self.train_domains_loader[self.domain_keys[time_step]])
+            avg_loss = epoch_loss.item() / len(self.train_domains_loader[self.domain_keys[time_step]])
             self.local_loss_history.append(avg_loss)
             
         return self.local_model.state_dict()
@@ -106,8 +106,7 @@ class Client:
         for epoch in range(self.args.local_epochs):
             epoch_loss = 0.0
             for data, target in self.train_domains_loader[self.domain_keys[time_step]]:
-                data, target = data.to(self.device), target.to(self.device)
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 output, _ = self.local_model(data)
                 loss = self.criterion(output, target)
 
@@ -119,11 +118,11 @@ class Client:
                 total_loss = loss + (self.args.mu / 2) * prox
                 total_loss.backward()
                 
-                torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), max_norm=5.0)
+                #torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), max_norm=5.0)
                 optimizer.step()
-                epoch_loss += total_loss.item()
+                epoch_loss += total_loss.detach()
 
-            avg_loss = epoch_loss / len(self.train_domains_loader[self.domain_keys[time_step]])
+            avg_loss = epoch_loss.item() / len(self.train_domains_loader[self.domain_keys[time_step]])
             self.local_loss_history.append(avg_loss)
             
         return self.local_model.state_dict()
@@ -141,14 +140,13 @@ class Client:
 
         for epoch in range(self.args.local_epochs):
             for data, target in loader:
-                data, target = data.to(self.device), target.to(self.device)
 
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 output, _ = self.local_model(data)
                 loss = self.criterion(output, target)
                 loss.backward()
 
-                torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), max_norm=5.0)
+                #torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), max_norm=5.0)
                 optimizer.step()
 
                 # SCAFFOLD post-step correction
@@ -203,13 +201,12 @@ class Client:
         # 1. Standard Global Model Training
         for epoch in range(self.args.local_epochs):
             for data, target in self.train_domains_loader[self.domain_keys[time_step]]:
-                data, target = data.to(self.device), target.to(self.device)
                 
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 output, _ = self.local_model(data)
                 loss = self.criterion(output, target)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), max_norm=5.0)
+                #torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), max_norm=5.0)
                 optimizer.step()
 
         # 2. Ditto Proximal Update for Personalized Model
@@ -217,8 +214,7 @@ class Client:
         for epoch in range(self.args.local_epochs):
             epoch_loss = 0.0
             for data, target in self.train_domains_loader[self.domain_keys[time_step]]:
-                data, target = data.to(self.device), target.to(self.device)
-                self.personalized_optimizer.zero_grad()
+                self.personalized_optimizer.zero_grad(set_to_none=True)
                 output, _ = self.personalized_model(data)
                 
                 loss = self.criterion(output, target)
@@ -230,9 +226,9 @@ class Client:
                 total_loss = loss + (self.args.lam / 2) * proximal_term
                 total_loss.backward()
                 self.personalized_optimizer.step()
-                epoch_loss += total_loss.item()
+                epoch_loss += total_loss.detach()
                 
-            avg_loss = epoch_loss / len(self.train_domains_loader[self.domain_keys[time_step]])
+            avg_loss = epoch_loss.item() / len(self.train_domains_loader[self.domain_keys[time_step]])
             self.local_loss_history.append(avg_loss)
                 
         return self.local_model.state_dict()
@@ -251,19 +247,22 @@ class Client:
 
         with torch.no_grad():
             for data, target in self.test_domains_loader[self.domain_keys[time_step]]:
-                data, target = data.to(self.device), target.to(self.device)
                 output, _ = self.eval_model(data)
                 loss = self.criterion(output, target)
-                total_loss += loss.item()
+                total_loss += loss.detach() 
                 
                 preds = torch.argmax(output, dim=1)
-                all_preds.extend(preds.cpu().numpy())
-                all_targets.extend(target.cpu().numpy())
-
                 probs = F.softmax(output, dim=1)[:, 1] 
-                all_probs.extend(probs.cpu().numpy())
+                
+                all_preds.append(preds)
+                all_targets.append(target)
+                all_probs.append(probs)
 
-        evaluation_loss = total_loss / len(self.test_domains_loader[self.domain_keys[time_step]])
+        all_preds = torch.cat(all_preds).cpu().numpy()
+        all_targets = torch.cat(all_targets).cpu().numpy()
+        all_probs = torch.cat(all_probs).cpu().numpy()
+
+        evaluation_loss = total_loss.item() / len(self.test_domains_loader[self.domain_keys[time_step]])
         accuracy  = accuracy_score(all_targets, all_preds)
         f1        = f1_score(all_targets, all_preds, average='macro', zero_division=0)
         precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)

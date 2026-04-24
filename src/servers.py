@@ -239,13 +239,13 @@ def run_server(args, model, device, domains_path, client_distributions, max_clie
                 global_state = model.state_dict()
                 new_state = {k: v.clone() for k, v in global_state.items()}
                 for key in new_state:
-                    new_state[key] = new_state[key].to(device) + sum(d[key].to(device) for d in model_deltas) / n
+                    new_state[key] = new_state[key] + sum(d[key] for d in model_deltas) / n
                 model.load_state_dict(new_state)
 
                 # Aggregate Control Variates
                 total_clients = len(client_list) 
                 for name in server_control:
-                    server_control[name] = server_control[name].to(device) + sum(d[name].to(device) for d in control_deltas) / total_clients
+                    server_control[name] = server_control[name] + sum(d[name] for d in control_deltas) / total_clients
         else:
             # Standard Averaging for FedAvg, FedProx, and Ditto
             global_state = model.state_dict()
