@@ -259,6 +259,8 @@ def parse_args():
                         help='Number of LSTM layers')
     parser.add_argument('--output_size', type=int, default=2,
                         help='Number of output classes (e.g., 2 for benign vs attack)')
+    parser.add_argument('--patience', type=int, default=10,
+                        help='Number of rounds to wait for loss improvement before early stopping')
 
     # Data processing hyperparameters
     parser.add_argument('--window_size', type=int, default=10,
@@ -271,16 +273,16 @@ def parse_args():
     # Federated learning hyperparameters
     parser.add_argument('--global_iters', type=int, default=50,
                         help='Number of global communication rounds')
-    parser.add_argument('--local_epochs', type=int, default=5,
+    parser.add_argument('--local_epochs', type=int, default=3,
                         help='Number of local epochs per domain/client')
-    parser.add_argument('--lr', type=float, default=0.001,
+    parser.add_argument('--lr', type=float, default=0.05,
                         help='Learning rate for local optimizers')
     parser.add_argument('--algorithm', type=str, default='fedavg',
                         choices=['fedavg', 'scaffold', 'fedprox', 'ditto', 'centralized'],
                         help='Federated learning algorithm to use')
     parser.add_argument('--client_fraction', type=float, default=1.0,
                         help='Fraction of clients to participate in each round (e.g., 0.1 for 10%%)')
-    parser.add_argument('--mu', type=float, default=0.01,
+    parser.add_argument('--mu', type=float, default=0.1,
                         help='Proximal term constant for FedProx (ignored if not using FedProx)')
     parser.add_argument('--lam', type=float, default=0.5,
                         help='Regularization constant for Ditto (ignored if not using Ditto)')
@@ -290,6 +292,8 @@ def parse_args():
                         help='Random seed for reproducibility')
     parser.add_argument('--set_seed', type=bool, default=True,
                         help='Whether to set random seeds for reproducibility')
+    parser.add_argument('--benchmark', type=bool, default=False,
+                        help='Whether to run without prints for benchmarking')
     parser.add_argument('--save_dir', type=str, default='./results',
                         help='Directory to save results (JSON, logs, etc.)')
     parser.add_argument('--exp_name', type=str, default='debug_run',

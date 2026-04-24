@@ -1,28 +1,53 @@
 import os
+import time
+import random
+import copy
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
-from fedprox_client import FedProxClient
+
+from clients import Client
 from utils import save_results_as_json
-import time
-import random
 
 # ------------------------------------------------------------------ #
-# Helpers
+# Helpers & Early Stopping
 # ------------------------------------------------------------------ #
 
-def _plot_client_convergence(client_id, global_hist, local_hist, plots_dir):
+class EarlyStopping:
+    """
+    Early stops the training if the tracked loss doesn't improve after a given patience.
+    """
+    def __init__(self, patience=10, min_delta=0.001):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+
+    def __call__(self, current_loss):
+        if self.best_loss is None:
+            self.best_loss = current_loss
+        elif current_loss > self.best_loss - self.min_delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_loss = current_loss
+            self.counter = 0
+            
+        return self.early_stop
+
+
+def _plot_client_convergence(client_id, global_hist, local_hist, plots_dir, algorithm):
     """
     2-panel convergence plot per client: Accuracy and F1 (local vs global).
-    global_hist / local_hist: list of dicts {accuracy, f1, precision, recall, loss}
     """
-    # X-axis for the global model (which updates every round)
     global_iters = list(range(1, len(global_hist) + 1))
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    fig.suptitle(f"Client {client_id} — Fedprox Convergence (Local vs Global)", fontsize=13)
+    fig.suptitle(f"Client {client_id} — {algorithm.upper()} Convergence (Local vs Global)", fontsize=13)
 
     for ax, metric, ylabel in zip(
         axes,
@@ -87,15 +112,15 @@ def _print_comparison_table(client_list, best_global_results, best_local_results
 
 
 # ------------------------------------------------------------------ #
-# Server
+# Unified Server
 # ------------------------------------------------------------------ #
 
-def fedprox_server(args, model, device, domains_path, client_distributions, max_client_participants, project_root, mu):
+def run_server(args, model, device, domains_path, client_distributions, max_client_participants, project_root):
     """
-    Fedprox — single time step.
-
+    Unified Server handling FedAvg, FedProx, Scaffold, and Ditto with Early Stopping.
     """
-    print("\n--- Starting Federated Proximal (FedProx) ---")
+    algorithm_name = args.algorithm.upper()
+    print(f"\n--- Starting {algorithm_name} ---")
 
     base_save_dir = os.path.join(project_root, args.save_dir, args.exp_name, args.algorithm)
     models_dir = os.path.join(base_save_dir, "models")
@@ -108,85 +133,128 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
 
     # ---- initialise clients ----
     client_list = [
-        FedProxClient(
+        Client(
             client_id=i,
             args=args,
             domain_path=domains_path,
             assigned_domains=client_distributions[i],
             device=device,
             model=model,
-            mu=mu,  
         )
         for i in range(max_client_participants)
     ]
     print(f"Initialized {len(client_list)} clients.")
 
-    # ---- metric history (indexed by iteration) ----
-    per_iter_global = {}   # per_iter_global[iter][client_id] = {acc, f1, ...}
-    per_iter_local  = {}   # per_iter_local[iter][client_id]  = {acc, f1, ...}
+    # Scaffold specific initialization
+    server_control = None
+    if args.algorithm == 'scaffold':
+        server_control = {
+            k: torch.zeros_like(v, device=device)
+            for k, v in model.named_parameters()
+        }
 
+    # ---- metric history ----
+    per_iter_global = {}   
+    per_iter_local  = {}   
     client_global_hist = {c.client_id: [] for c in client_list}
     client_local_hist  = {c.client_id: [] for c in client_list}
 
     best_global_acc = -1.0
     best_local_acc  = {c.client_id: -1.0 for c in client_list}
-
     round_times = []
+    
+    # ---- Initialize Early Stopping ----
+    early_stopping = EarlyStopping(patience=args.patience, min_delta=0.001)
+
     # ------------------------------------------------------------------ #
     # Global iteration loop
     # ------------------------------------------------------------------ #
     for iteration in range(args.global_iters):
-        round_start = time.perf_counter()
+        round_start = time.perf_counter() 
+
         print(f"\n{'='*55}")
-        print(f"  Global Iteration {iteration + 1} / {args.global_iters}")
+        print(f"  {algorithm_name} — Global Iteration {iteration + 1} / {args.global_iters}")
         print(f"{'='*55}")
 
         # -------------------------------------------------------------- #
-        # STEP 1 — Local training + immediate local evaluation
-        # Each client initialises from the current global weights, trains,
-        # then is evaluated on its OWN test data BEFORE aggregation.
+        # STEP 1 — Local training & evaluation
         # -------------------------------------------------------------- #
+    
         print(f"\n  [Step 1] Local training & evaluation")
-        local_states = []
+        
+        local_states = []     # Used for FedAvg, FedProx, Ditto
+        model_deltas = []     # Used for Scaffold
+        control_deltas = []   # Used for Scaffold
+        
         per_iter_local[iteration] = {}
         l_totals = dict(loss=0.0, accuracy=0.0, f1=0.0, precision=0.0, recall=0.0, auc_roc=0.0)
+    
         selected_clients = random.sample(client_list, max(1, int(len(client_list) * args.client_fraction)))
         for c in selected_clients:
-            # train — updates c.local_model, returns its state_dict
-            trained_state = c.train(model.state_dict(), time_step=time_step)
-            local_states.append(trained_state)
+            # Route training based on algorithm
+            if args.algorithm == 'scaffold':
+                m_delta, c_delta = c.train(model.state_dict(), time_step=time_step, server_control_variate=server_control)
+                model_deltas.append(m_delta)
+                control_deltas.append(c_delta)
+            else:
+                trained_state = c.train(model.state_dict(), time_step=time_step)
+                local_states.append(trained_state)
 
-            # evaluate the just-trained local model (c.local_model still holds it)
+            # Evaluate local model
             loss, acc, f1, prec, rec, auc_roc = c.evaluate_local_model_full(time_step)
-            
+           
             row = dict(iteration=iteration+1, loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec, auc_roc=auc_roc)
-            
             per_iter_local[iteration][c.client_id] = row
             client_local_hist[c.client_id].append(row)
             for k in l_totals:
                 l_totals[k] += row[k]
 
-            # save best local model per client
+            # Save best local model per client
             if acc > best_local_acc[c.client_id]:
                 best_local_acc[c.client_id] = acc
                 local_path = os.path.join(models_dir, f"best_local_model_client_{c.client_id}.pth")
-                torch.save(c.local_model.state_dict(), local_path)
-                print(f"  --> [Saved] Best local model client {c.client_id} (acc={acc:.4f})")
+                
+                if args.algorithm == 'ditto':
+                    torch.save(c.personalized_model.state_dict(), local_path)
+                else:
+                    torch.save(c.local_model.state_dict(), local_path)
+                    
+                if not args.benchmark:
+                    print(f"  --> [Saved] Best local model client {c.client_id} (acc={acc:.4f})")
 
         avg_l = {k: v / len(selected_clients) for k, v in l_totals.items()}
         print(f"\n  [Avg Local]  Acc={avg_l['accuracy']:.4f}  F1={avg_l['f1']:.4f}  "
               f"Prec={avg_l['precision']:.4f}  Rec={avg_l['recall']:.4f}  Loss={avg_l['loss']:.4f} AUC={avg_l['auc_roc']:.4f}")
 
         # -------------------------------------------------------------- #
-        # STEP 2 — FedProx aggregation → global model evaluation
+        # STEP 2 — Aggregation & global model evaluation
         # -------------------------------------------------------------- #
-        print(f"\n  [Step 2] FedProx aggregation & global model evaluation")
-        global_state = model.state_dict()
-        n = len(local_states)
-        for key in global_state:
-            global_state[key] = sum(s[key] for s in local_states) / n
-        model.load_state_dict(global_state)
 
+        print(f"\n  [Step 2] Server aggregation & global model evaluation")
+        
+        if args.algorithm == 'scaffold':
+            n = len(model_deltas)
+            with torch.no_grad():
+                # Aggregate Model Weights
+                global_state = model.state_dict()
+                new_state = {k: v.clone() for k, v in global_state.items()}
+                for key in new_state:
+                    new_state[key] = new_state[key].to(device) + sum(d[key].to(device) for d in model_deltas) / n
+                model.load_state_dict(new_state)
+
+                # Aggregate Control Variates
+                total_clients = len(client_list) 
+                for name in server_control:
+                    server_control[name] = server_control[name].to(device) + sum(d[name].to(device) for d in control_deltas) / total_clients
+        else:
+            # Standard Averaging for FedAvg, FedProx, and Ditto
+            global_state = model.state_dict()
+            n = len(local_states)
+            for key in global_state:
+                global_state[key] = sum(s[key] for s in local_states) / n
+            model.load_state_dict(global_state)
+
+        # Global Evaluation
         per_iter_global[iteration] = {}
         g_totals = dict(loss=0.0, accuracy=0.0, f1=0.0, precision=0.0, recall=0.0, auc_roc=0.0)
 
@@ -199,22 +267,38 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
                 g_totals[k] += row[k]
 
         avg_g = {k: v / len(client_list) for k, v in g_totals.items()}
-        print(f"\n  [Avg Global] Acc={avg_g['accuracy']:.4f}  F1={avg_g['f1']:.4f}  "
+        print(f"  [Avg Global] Acc={avg_g['accuracy']:.4f}  F1={avg_g['f1']:.4f}  "
               f"Prec={avg_g['precision']:.4f}  Rec={avg_g['recall']:.4f}  Loss={avg_g['loss']:.4f} AUC={avg_g['auc_roc']:.4f}")
 
-        # save best global model
+        # Save best global model
         if avg_g["accuracy"] > best_global_acc:
             best_global_acc = avg_g["accuracy"]
             best_global_path = os.path.join(models_dir, "best_global_model.pth")
             torch.save(model.state_dict(), best_global_path)
-            print(f"  --> [Saved] Best global model (acc={best_global_acc:.4f})")
-        
-        round_end = time.perf_counter() # Stop the timer
+            if not args.benchmark:
+                print(f"  --> [Saved] Best global model (acc={best_global_acc:.4f})")
+
+        round_end = time.perf_counter() 
         round_duration = round_end - round_start
         round_times.append(round_duration)
-        print(f"\n  [Timing] Iteration {iteration + 1} completed in {round_duration:.2f} seconds")
+        print(f"  [Timing] Iteration {iteration + 1} completed in {round_duration:.2f} seconds")
+        
+        # -------------------------------------------------------------- #
+        # STEP 3 — Early Stopping Check
+        # -------------------------------------------------------------- #
+        if args.algorithm == 'ditto':
+            metric_to_track = avg_l['loss'] # Ditto cares about Local Performance
+        else:
+            metric_to_track = avg_g['loss'] # Others care about Global Performance
+            
+        if early_stopping(metric_to_track):
+            print(f"\n[!] EARLY STOPPING TRIGGERED at Iteration {iteration + 1} [!]")
+            print(f"    The target loss has not improved for {early_stopping.patience} consecutive rounds.")
+            print(f"    Homing in on the best saved models and concluding training.")
+            break
+
     # ------------------------------------------------------------------ #
-    # Convergence plots — one per client
+    # Post-Training Steps
     # ------------------------------------------------------------------ #
     print("\n--- Generating convergence plots ---")
     for c in client_list:
@@ -223,43 +307,41 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
             client_global_hist[c.client_id],
             client_local_hist[c.client_id],
             plots_dir,
+            args.algorithm
         )
-        print(f"  [Plot] Client {c.client_id} -> {path}")
 
-    # ------------------------------------------------------------------ #
-    # Final evaluation — best global model across ALL clients
-    # ------------------------------------------------------------------ #
     print("\n--- Final Evaluation: Best Global Model ---")
+    # Because of early stopping, the current model in memory might be overfitted.
+    # Loading the best_global_model guarantees we test against the peak accuracy model.
     best_global_path = os.path.join(models_dir, "best_global_model.pth")
-    model.load_state_dict(torch.load(best_global_path, map_location=device))
+    if os.path.exists(best_global_path):
+        model.load_state_dict(torch.load(best_global_path, map_location=device))
 
     best_global_results = {}
     for c in client_list:
         loss, acc, f1, prec, rec, auc_roc = c.evaluate_global_model(model.state_dict(), time_step)
         best_global_results[c.client_id] = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec, auc_roc=auc_roc)
 
-    # ------------------------------------------------------------------ #
-    # Final evaluation — best local model for each client
-    # ------------------------------------------------------------------ #
     print("\n--- Final Evaluation: Best Local Models ---")
     best_local_results = {}
     for c in client_list:
         local_path = os.path.join(models_dir, f"best_local_model_client_{c.client_id}.pth")
-        loss, acc, f1, prec, rec, auc_roc = c.evaluate_model(
-            torch.load(local_path, map_location=device), time_step
-        )
+        
+        # If the client trained and saved a model, load it
+        if os.path.exists(local_path):
+            loss, acc, f1, prec, rec, auc_roc = c.evaluate_model(
+                torch.load(local_path, map_location=device), time_step
+            )
+            print(f"  [Client {c.client_id}] [Best Local] "
+                  f"Acc={acc:.4f}  F1={f1:.4f}  Prec={prec:.4f}  Rec={rec:.4f}  Loss={loss:.4f} AUC={auc_roc:.4f}")
+        else:
+            # Fallback if the client never participated due to low fraction + early stopping
+            loss, acc, f1, prec, rec, auc_roc = 0.0, 0.0, 0.0, 0.0, 0.0, 0.5
+            print(f"  [Client {c.client_id}] [Best Local] NO MODEL FOUND (Did not participate)")
+
+        # Always add to the dictionary to prevent KeyErrors
         best_local_results[c.client_id] = dict(loss=loss, accuracy=acc, f1=f1, precision=prec, recall=rec, auc_roc=auc_roc)
-        print(f"  [Client {c.client_id}] [Best Local] "
-              f"Acc={acc:.4f}  F1={f1:.4f}  Prec={prec:.4f}  Rec={rec:.4f}  Loss={loss:.4f} AUC={auc_roc:.4f}")
 
-    # ------------------------------------------------------------------ #
-    # Side-by-side comparison table
-    # ------------------------------------------------------------------ #
-    _print_comparison_table(client_list, best_global_results, best_local_results)
-
-    # ------------------------------------------------------------------ #
-    # Save all results to JSON
-    # ------------------------------------------------------------------ #
     print("\n--- Training Complete ---")
     total_time = sum(round_times)
     avg_round_time = total_time / len(round_times) if round_times else 0
@@ -277,6 +359,5 @@ def fedprox_server(args, model, device, domains_path, client_distributions, max_
         }
     }
 
-    results_folder = base_save_dir
-    filename = f"metrics_fedprox_{args.exp_name}.json"
-    save_results_as_json(filename, results, project_root, results_folder)
+    filename = f"metrics_{args.algorithm}_{args.exp_name}.json"
+    save_results_as_json(filename, results, project_root, base_save_dir)

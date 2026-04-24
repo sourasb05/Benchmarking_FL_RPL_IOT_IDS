@@ -1,4 +1,3 @@
-from http import server
 import json
 import os
 from flask import json
@@ -18,11 +17,7 @@ import sys
 
 # our defined functions
 
-from client import Client
-from server import server
-from scaffold_server import scaffold_server
-from fedprox_server import fedprox_server
-from ditto_server import ditto_server
+from servers import run_server
 from centralized import centralized_training
 import utils as utils
 import models as models
@@ -88,49 +83,7 @@ def main():
     model = models.LSTMClassifier(input_dim=n_raw_features, hidden_dim=args.hidden_size, output_dim=args.output_size, num_layers=2, fc_hidden_dim=32).to(device)
 
     # Trigger the server execution based on the chosen algorithm
-    if args.algorithm == 'fedavg':
-        server(
-            args=args,
-            model=model,
-            device=device,
-            domains_path=domains_path,
-            client_distributions=client_distributions,
-            max_client_participants=max_client_participants,
-            project_root=project_root,
-        )
-    elif args.algorithm == 'scaffold':
-        scaffold_server(
-            args=args,
-            model=model,
-            device=device,
-            domains_path=domains_path,
-            client_distributions=client_distributions,
-            max_client_participants=max_client_participants,
-            project_root=project_root,
-        )
-    elif args.algorithm == 'fedprox':
-        fedprox_server(
-            args=args,
-            model=model,
-            device=device,
-            domains_path=domains_path,
-            client_distributions=client_distributions,
-            max_client_participants=max_client_participants,
-            project_root=project_root,
-            mu=args.mu,
-        )
-    elif args.algorithm == 'ditto':
-        ditto_server(
-            args=args,
-            model=model,
-            device=device,
-            domains_path=domains_path,
-            client_distributions=client_distributions,
-            max_client_participants=max_client_participants,
-            project_root=project_root,
-            lam=args.lam,
-        )
-    elif args.algorithm == 'centralized':
+    if args.algorithm == 'centralized':
         centralized_training(
             args=args,
             model=model,
@@ -138,8 +91,17 @@ def main():
             domains_path=domains_path,
             domains=domains,
             project_root=project_root,
-        )        
+        )            
+    else:
+        run_server(
+            args=args,
+            model=model,
+            device=device,
+            domains_path=domains_path,
+            client_distributions=client_distributions,
+            max_client_participants=max_client_participants,
+            project_root=project_root,
+        )
 
 if __name__ == "__main__":
-
     main()

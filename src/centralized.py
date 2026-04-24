@@ -53,7 +53,7 @@ def centralized_training(args, model, device, domains_path, domains, project_roo
     # ------------------------------------------------------------------ #
     # STEP 2: Setup Training
     # ------------------------------------------------------------------ #
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
     
     # In FedAvg, total data passes = global_iters * local_epochs
