@@ -283,6 +283,8 @@ def parse_args():
                         help='Proximal term constant for FedProx (ignored if not using FedProx)')
     parser.add_argument('--lam', type=float, default=0.5,
                         help='Regularization constant for Ditto (ignored if not using Ditto)')
+    parser.add_argument('--num_clients', type=int, default=48,
+                        help='Total number of clients')
 
     # Paths and environment
     parser.add_argument('--seed', type=int, default=42,

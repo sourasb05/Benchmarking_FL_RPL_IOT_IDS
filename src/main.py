@@ -28,6 +28,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Using device: {device}")
     args = utils.parse_args()
+    
     # Set random seeds for reproducibility
     if args.set_seed:
         utils.set_seed(args.seed)
@@ -41,7 +42,8 @@ def main():
 
     client_list = []
 
-    max_client_participants = 48
+    max_client_participants = args.num_clients
+    
 
     #domain_keys = [key for key in domains.keys() if "worstparent" in key]
     domain_keys = [key for key in domains.keys()]
@@ -49,6 +51,7 @@ def main():
     print(f"{len(domain_keys)}domain_keys: {domain_keys}")
     client_distributions = {i: [] for i in range(max_client_participants)}
     # 3. Distribute the domains using round-robin
+
     for i, key in enumerate(domain_keys):
         client_id = i % max_client_participants
         client_distributions[client_id].append(key)
@@ -80,8 +83,15 @@ def main():
     # input_dim = n_raw_features (per-step features), NOT window_size * n_raw_features.
     # The LSTM now sees (B, window_size, n_raw_features) — real temporal sequences.
     # num_layers=2 stacks two LSTM layers for deeper temporal abstraction.
-    model = models.LSTMClassifier(input_dim=n_raw_features, hidden_dim=args.hidden_size, output_dim=args.output_size, num_layers=2, fc_hidden_dim=32).to(device)
-
+    #model = models.LSTMClassifier(input_dim=n_raw_features, hidden_dim=args.hidden_size, output_dim=args.output_size, num_layers=2, fc_hidden_dim=32).to(device)
+    model = models.LSTMModelWithAttention(
+        input_size=n_raw_features, 
+        hidden_size=args.hidden_size, 
+        output_size=args.output_size, 
+        num_layers=2,
+        bidirectional=True 
+    ).to(device)
+    
     # Trigger the server execution based on the chosen algorithm
     if args.algorithm == 'centralized':
         centralized_training(

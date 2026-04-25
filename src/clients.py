@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.utils.data import ConcatDataset, DataLoader
 import copy
 import utils
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
@@ -24,9 +25,13 @@ class Client:
         # Data Loaders
         self.train_domains_loader = {}
         self.test_domains_loader = {}
+
+        all_test_datasets = []
+        all_train_datasets = []
+
         domains = utils.create_domains(domain_path, assigned_domains)
         for key, files in domains.items():
-            self.train_domains_loader[key], self.test_domains_loader[key] = utils.load_data(
+            train_loader, test_loader = utils.load_data(
                 self.domain_path, key, files, 
                 window_size=self.args.window_size, 
                 step_size=self.args.step_size, 
@@ -34,9 +39,15 @@ class Client:
                 n_raw_features=getattr(self.args, 'n_raw_features', None),
                 device = device
             )
-            
-        self.domain_keys = list(self.train_domains_loader.keys())
+            all_train_datasets.append(train_loader.dataset)
+            all_test_datasets.append(test_loader.dataset)
         
+        combined_train_dataset = ConcatDataset(all_train_datasets)
+        combined_test_dataset = ConcatDataset(all_test_datasets)
+
+        self.train_domains_loader = DataLoader(combined_train_dataset, batch_size=self.args.batch_size, shuffle=True)
+        self.test_domains_loader = DataLoader(combined_test_dataset, batch_size=self.args.batch_size, shuffle=False)
+
         # ----------------------------------------------------------------- #
         # Algorithm-Specific Initializations
         # ----------------------------------------------------------------- #
@@ -77,7 +88,7 @@ class Client:
 
         for epoch in range(self.args.local_epochs):
             epoch_loss = 0.0
-            for data, target in self.train_domains_loader[self.domain_keys[time_step]]:
+            for data, target in self.train_domains_loader:
                 
                 optimizer.zero_grad(set_to_none=True)
                 output, _ = self.local_model(data)
@@ -88,7 +99,7 @@ class Client:
                 optimizer.step()
                 epoch_loss += loss.detach()
 
-            avg_loss = epoch_loss.item() / len(self.train_domains_loader[self.domain_keys[time_step]])
+            avg_loss = epoch_loss.item() / len(self.train_domains_loader)
             self.local_loss_history.append(avg_loss)
             
         return self.local_model.state_dict()
@@ -105,7 +116,7 @@ class Client:
                 
         for epoch in range(self.args.local_epochs):
             epoch_loss = 0.0
-            for data, target in self.train_domains_loader[self.domain_keys[time_step]]:
+            for data, target in self.train_domains_loader:
                 optimizer.zero_grad(set_to_none=True)
                 output, _ = self.local_model(data)
                 loss = self.criterion(output, target)
@@ -122,7 +133,7 @@ class Client:
                 optimizer.step()
                 epoch_loss += total_loss.detach()
 
-            avg_loss = epoch_loss.item() / len(self.train_domains_loader[self.domain_keys[time_step]])
+            avg_loss = epoch_loss.item() / len(self.train_domains_loader)
             self.local_loss_history.append(avg_loss)
             
         return self.local_model.state_dict()
@@ -135,7 +146,7 @@ class Client:
         self.local_model.train()
         
         optimizer = optim.SGD(self.local_model.parameters(), lr=self.args.lr, weight_decay=1e-4)
-        loader = self.train_domains_loader[self.domain_keys[time_step]]
+        loader = self.train_domains_loader
         K = self.args.local_epochs * len(loader)
 
         for epoch in range(self.args.local_epochs):
@@ -200,7 +211,7 @@ class Client:
         
         # 1. Standard Global Model Training
         for epoch in range(self.args.local_epochs):
-            for data, target in self.train_domains_loader[self.domain_keys[time_step]]:
+            for data, target in self.train_domains_loader:
                 
                 optimizer.zero_grad(set_to_none=True)
                 output, _ = self.local_model(data)
@@ -213,7 +224,7 @@ class Client:
         self.personalized_model.train()
         for epoch in range(self.args.local_epochs):
             epoch_loss = 0.0
-            for data, target in self.train_domains_loader[self.domain_keys[time_step]]:
+            for data, target in self.train_domains_loader:
                 self.personalized_optimizer.zero_grad(set_to_none=True)
                 output, _ = self.personalized_model(data)
                 
@@ -228,7 +239,7 @@ class Client:
                 self.personalized_optimizer.step()
                 epoch_loss += total_loss.detach()
                 
-            avg_loss = epoch_loss.item() / len(self.train_domains_loader[self.domain_keys[time_step]])
+            avg_loss = epoch_loss.item() / len(self.train_domains_loader)
             self.local_loss_history.append(avg_loss)
                 
         return self.local_model.state_dict()
@@ -246,7 +257,7 @@ class Client:
         all_probs = []
 
         with torch.no_grad():
-            for data, target in self.test_domains_loader[self.domain_keys[time_step]]:
+            for data, target in self.test_domains_loader:
                 output, _ = self.eval_model(data)
                 loss = self.criterion(output, target)
                 total_loss += loss.detach() 
@@ -262,7 +273,7 @@ class Client:
         all_targets = torch.cat(all_targets).cpu().numpy()
         all_probs = torch.cat(all_probs).cpu().numpy()
 
-        evaluation_loss = total_loss.item() / len(self.test_domains_loader[self.domain_keys[time_step]])
+        evaluation_loss = total_loss.item() / len(self.test_domains_loader)
         accuracy  = accuracy_score(all_targets, all_preds)
         f1        = f1_score(all_targets, all_preds, average='macro', zero_division=0)
         precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
@@ -278,7 +289,7 @@ class Client:
     def evaluate_global_model(self, model_state, time_step):
         loss, acc, f1, prec, rec, auc_roc = self.evaluate_model(model_state, time_step)
         if not self.args.benchmark:
-            print(f"  [Client {self.client_id}] [Global] domain={self.domain_keys[time_step]} "
+            print(f"  [Client {self.client_id}] [Global] domain={self.assigned_domains} "
                   f"Loss={loss:.4f} Acc={acc:.4f} F1={f1:.4f} Prec={prec:.4f} Rec={rec:.4f} AUC={auc_roc:.4f}")
         return loss, acc, f1, prec, rec, auc_roc
 
@@ -293,6 +304,6 @@ class Client:
         loss, acc, f1, prec, rec, auc_roc = self.evaluate_model(model_state, time_step)
         
         if not self.args.benchmark:
-            print(f"  [Client {self.client_id}] [Local]  domain={self.domain_keys[time_step]} "
+            print(f"  [Client {self.client_id}] [Local]  domain={self.assigned_domains} "
                   f"Loss={loss:.4f} Acc={acc:.4f} F1={f1:.4f} Prec={prec:.4f} Rec={rec:.4f} AUC={auc_roc:.4f}")
         return loss, acc, f1, prec, rec, auc_roc
