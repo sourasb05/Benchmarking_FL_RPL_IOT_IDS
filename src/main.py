@@ -13,6 +13,7 @@ from sklearn.metrics import (
 import warnings
 warnings.filterwarnings("ignore")
 import sys
+import random
 
 
 # our defined functions
@@ -47,7 +48,7 @@ def main():
 
     #domain_keys = [key for key in domains.keys() if "worstparent" in key]
     domain_keys = [key for key in domains.keys()]
-    
+    random.shuffle(domain_keys)
     print(f"{len(domain_keys)}domain_keys: {domain_keys}")
     client_distributions = {i: [] for i in range(max_client_participants)}
     # 3. Distribute the domains using round-robin

@@ -250,7 +250,7 @@ def parse_args():
     # Model hyperparameters
     parser.add_argument('--input_size', type=int, default=140,
                         help='Number of input features per time step (e.g., 14 for IDS dataset)')
-    parser.add_argument('--hidden_size', type=int, default=64,
+    parser.add_argument('--hidden_size', type=int, default=32,
                         help='Hidden size of LSTM')
     parser.add_argument('--num_layers', type=int, default=1,
                         help='Number of LSTM layers')
@@ -264,7 +264,7 @@ def parse_args():
                         help='Sliding window size for sequence generation')
     parser.add_argument('--step_size', type=int, default=2,
                         help='Step size for sliding window')
-    parser.add_argument('--batch_size', type=int, default=256,
+    parser.add_argument('--batch_size', type=int, default=128,
                         help='Batch size for DataLoader')
 
     # Federated learning hyperparameters
@@ -272,14 +272,14 @@ def parse_args():
                         help='Number of global communication rounds')
     parser.add_argument('--local_epochs', type=int, default=3,
                         help='Number of local epochs per domain/client')
-    parser.add_argument('--lr', type=float, default=0.05,
+    parser.add_argument('--lr', type=float, default=0.015,
                         help='Learning rate for local optimizers')
     parser.add_argument('--algorithm', type=str, default='fedavg',
                         choices=['fedavg', 'scaffold', 'fedprox', 'ditto', 'centralized'],
                         help='Federated learning algorithm to use')
     parser.add_argument('--client_fraction', type=float, default=1.0,
                         help='Fraction of clients to participate in each round (e.g., 0.1 for 10%%)')
-    parser.add_argument('--mu', type=float, default=0.1,
+    parser.add_argument('--mu', type=float, default=0.25,
                         help='Proximal term constant for FedProx (ignored if not using FedProx)')
     parser.add_argument('--lam', type=float, default=0.5,
                         help='Regularization constant for Ditto (ignored if not using Ditto)')
